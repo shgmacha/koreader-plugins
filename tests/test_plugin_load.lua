@@ -44,6 +44,18 @@ local function class(kind)
     return C
 end
 
+-- Minimal blitbuffer: size, blitFrom log, free flag.
+local function fakeBB(w, h, extra)
+    local bb = extra or {}
+    bb.w, bb.h, bb.blits = w, h, {}
+    function bb:getWidth() return self.w end
+    function bb:getHeight() return self.h end
+    function bb:getType() return 1 end
+    function bb:blitFrom(src, dx, dy, ox, oy, bw, bh) table.insert(self.blits, { dx, dy, ox, oy, bw, bh }) end
+    function bb:free() self.freed = true end
+    return bb
+end
+
 local shown, closed, dirty = {}, {}, {}
 local dispatched
 local fs = {}          -- path -> true for files that "exist"
@@ -51,7 +63,16 @@ local db = {}          -- fake database behaviour
 local settings_dir = "/kosettings"
 
 local stubs = {
-    ["ffi/blitbuffer"] = { COLOR_WHITE = 0xFF, COLOR_BLACK = 0, Color8 = function(v) return v end },
+    ["ffi/blitbuffer"] = {
+        COLOR_WHITE = 0xFF, COLOR_BLACK = 0, Color8 = function(v) return v end,
+        new = function(w, h) return fakeBB(w, h) end,
+    },
+    ["ui/renderimage"] = {
+        scaleBlitBuffer = function(_, bb, w, h)
+            if bb:getWidth() == w and bb:getHeight() == h then return bb end
+            local out = fakeBB(w, h); out.scaled_from = bb; return out
+        end,
+    },
     ["ui/font"] = { getFace = function(_, name, size) return { name = name, size = size } end },
     ["ui/size"] = { padding = { default = 5 }, border = { thin = 1, thick = 2 }, radius = { window = 8 }, line = { thin = 1, medium = 1 } },
     ["ui/geometry"] = { new = function(_, o) return o end },
@@ -201,7 +222,7 @@ local function resetDB()
     ReadHistory.hist = { { file = "/books/gone.epub" }, { file = "/books/a.epub" }, { file = "/books/b.epub" } }
     package.loaded["bookinfomanager"] = {
         getBookInfo = function(_, file)
-            return { has_cover = true, cover_bb = { file = file, free = function(self) self.freed = true end } }
+            return { has_cover = true, cover_bb = fakeBB(300, 450, { file = file }) }
         end,
     }
     Screen.w, Screen.h = 600, 800
@@ -335,7 +356,7 @@ test("tiny screen falls back to a list instead of covers", function()
     assert(texts(view):find("❀ Anathema · 50m"), texts(view))
 end)
 
-test("books page is a cover gallery with % and hours, no progress bars", function()
+test("books page is an edge-to-edge cover gallery with % and hours", function()
     resetDB()
     local view = openView()
     view:goToPage(3)
@@ -344,7 +365,7 @@ test("books page is a cover gallery with % and hours, no progress bars", functio
     assert(t:find("Atomic Habits\n25%% · 30m"), t)
     eq(count(view, "ProgressWidget"), 0)
     local tiles = 0
-    walk(view, function(n) if n.radius == 8 and n.padding == 4 then tiles = tiles + 1 end end)
+    walk(view, function(n) if n.kind == "Framecontainer" and n.padding == 0 and n.color == 0xDD and n.bordersize == 1 then tiles = tiles + 1 end end)
     eq(tiles, 2)
 end)
 
@@ -356,7 +377,7 @@ test("books gallery shows at most 6 covers", function()
     local view = openView()
     view:goToPage(3)
     local tiles = 0
-    walk(view, function(n) if n.radius == 8 and n.padding == 4 then tiles = tiles + 1 end end)
+    walk(view, function(n) if n.kind == "Framecontainer" and n.padding == 0 and n.color == 0xDD and n.bordersize == 1 then tiles = tiles + 1 end end)
     eq(tiles, 6)
 end)
 
@@ -576,10 +597,17 @@ test("year page: goal hearts, status, month chart", function()
     local view = openView()
     view:goToPage(5)
     local t = texts(view)
-    assert(t:find("1 of 12 books"), t)
+    assert(t:find("my " .. os.date("%Y") .. " reading goal\n1\n of 12 books"), t)
+    assert(t:find("8%% of my goal"), t)
+    eq(count(view, "ProgressWidget"), 0)
     assert(t:find("My year"), t)
-    assert(t:find("♥ ♡ ♡"), t)
-    assert(t:find("1h 30m · 120 pages · 2 days"), t)
+    local gb
+    walk(view, function(n) if getmetatable(n) == BlossomView.GoalBar then gb = n end end)
+    assert(gb, "goal bar")
+    eq(gb.ratio, 1 / 12)
+    assert(not t:find("♥  ♡"), "no heart row")
+    assert(t:find("1h 30m\nread\n120\npages\n2\ndays"), t)
+    assert(t:find("change my goal"), t)
     local bars = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
     eq(bars, 12)
@@ -592,7 +620,7 @@ test("setting the goal saves it and refreshes", function()
     local view = openView()
     view:goToPage(5)
     local btn
-    walk(view, function(n) if n.text == "✎ set my goal" then btn = n end end)
+    walk(view, function(n) if n.text == "✎  change my goal" then btn = n end end)
     btn.callback()
     local spin = lastOfKind("SpinWidget")
     eq({ spin.value, spin.value_min, spin.value_max }, { 12, 1, 365 })
@@ -600,12 +628,16 @@ test("setting the goal saves it and refreshes", function()
     eq(G_reader_settings.data.blossom.yearly_goal, 30)
     eq(G_reader_settings.flushed, true)
     local t = texts(view)
-    assert(t:find("1 of 30 books"), t)
-    assert(not t:find("♥ ♡ ♡"), "no hearts above 24")
+    assert(t:find("1\n of 30 books"), t)
+    assert(t:find("3%% of my goal"), t)
+    eq(count(view, "ProgressWidget"), 0)
+    local gb
+    walk(view, function(n) if getmetatable(n) == BlossomView.GoalBar then gb = n end end)
+    eq(gb.ratio, 1 / 30)
     -- reopen: goal persisted
     local again = openView()
     again:goToPage(5)
-    assert(texts(again):find("1 of 30 books"))
+    assert(texts(again):find("1\n of 30 books"))
 end)
 
 test("invalid saved goal falls back to 12", function()
@@ -613,7 +645,7 @@ test("invalid saved goal falls back to 12", function()
     G_reader_settings.data.blossom = { yearly_goal = "lots" }
     local view = openView()
     view:goToPage(5)
-    assert(texts(view):find("1 of 12 books"))
+    assert(texts(view):find("1\n of 12 books"))
 end)
 
 test("empty year shows a fresh-year message", function()
@@ -621,7 +653,8 @@ test("empty year shows a fresh-year message", function()
     fs[settings_dir .. "/statistics.sqlite3"] = nil
     local view = openView()
     view:goToPage(5)
-    assert(texts(view):find("0 of 12 books"))
+    assert(texts(view):find("0\n of 12 books"))
+    assert(texts(view):find("0%% of my goal"))
     assert(texts(view):find("a fresh year to bloom"))
 end)
 
@@ -785,7 +818,7 @@ test("bows: in every header, on finished books and the year title", function()
     view:goToPage(3)
     eq(bows(view), 2) -- header + finished Anathema
     view:goToPage(5)
-    eq(bows(view), 2) -- header + "1 of 12 books"
+    eq(bows(view), 2) -- header + the goal bar charm
     view:openBook(2)
     eq(bows(shown[#shown]), 1) -- unfinished book: header only
 end)
@@ -797,6 +830,35 @@ test("pagination hearts are small", function()
     walk(view, function(n) if n.text == "♥ ♡ ♡ ♡ ♡" then dots = n end end)
     assert(dots, "compact heart dots")
     eq(dots.face.size, 13)
+end)
+
+test("gallery covers are cropped to fill their box", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(3)
+    local img
+    walk(view, function(n) if n.kind == "ImageWidget" and n.image and n.image.blits then img = n end end)
+    assert(img, "filled cover image")
+    eq({ img.image.w, img.image.h, img.width, img.height, img.image_disposable }, { img.width, img.height, img.width, img.height, true })
+    local blit = img.image.blits[1]
+    -- 300x450 source scaled to cover: centred offset, full box copied
+    eq({ blit[1], blit[2], blit[5], blit[6] }, { 0, 0, img.width, img.height })
+    assert(blit[3] >= 0 and blit[4] >= 0)
+    local src = view.cover_bbs["md5:/books/a.epub"]
+    eq(src.freed, nil, "cached original is kept")
+end)
+
+test("goal bar clamps its fill and keeps the bow inside", function()
+    resetDB()
+    local view = openView()
+    local full = view:goalBar(1.7, 400)
+    eq(full[1].ratio, 1)
+    eq(full[2].overlap_offset[1], 400 - 38)
+    local empty = view:goalBar(0, 400)
+    eq(empty[1].ratio, 0)
+    eq(empty[2].overlap_offset[1], 0)
+    local half = view:goalBar(0.5, 400)
+    eq(half[2].overlap_offset[1], 200 - 19)
 end)
 
 H.done()

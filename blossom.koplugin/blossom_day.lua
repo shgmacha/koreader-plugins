@@ -55,24 +55,6 @@ local function muted(str, size, max_width)
     return text(str, Theme.face("script", size or 15), { color = Theme.soft_ink, max_width = max_width })
 end
 
---- Borderless soft strip of little stats: value over label.
-function BlossomDay:statStrip(items)
-    local inner = cardInner(self.inner_w)
-    local col_w = floor(inner / #items)
-    local row = HorizontalGroup:new{ align = "center" }
-    for _, item in ipairs(items) do
-        table.insert(row, CenterContainer:new{
-            dimen = Geom:new{ w = col_w, h = px(52) },
-            VerticalGroup:new{
-                align = "center",
-                text(item[1], Theme.face("bold", 18), { max_width = col_w }),
-                muted(item[2], 14, col_w),
-            },
-        })
-    end
-    return Theme.card(row, { bordersize = 0, radius = px(18) })
-end
-
 --- Covers side by side with the time read that day underneath.
 function BlossomDay:coverRow(books)
     local gap = px(14)
@@ -157,12 +139,12 @@ function BlossomDay:build()
         return self.height - header_h - h - px(24)
     end
 
-    add(self:statStrip({
+    add(Theme.statStrip({
         { Data.fmtDuration(day.seconds), _("read") },
         { tostring(day.pages), day.pages == 1 and _("page") or _("pages") },
         { tostring(#notes.highlights), #notes.highlights == 1 and _("highlight") or _("highlights") },
         { tostring(#notes.bookmarks), #notes.bookmarks == 1 and _("bookmark") or _("bookmarks") },
-    }))
+    }, self.inner_w))
     add(VerticalSpan:new{ width = gap })
 
     add(Theme.rule(_("books I read"), self.inner_w))

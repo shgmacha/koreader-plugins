@@ -5,6 +5,7 @@ Blossom's full-screen dashboard: five swipeable pages
 
 local BlossomDay = require("blossom_day")
 local BlossomDetail = require("blossom_detail")
+local Blitbuffer = require("ffi/blitbuffer")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
 local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -20,6 +21,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
 local RectSpan = require("ui/widget/rectspan")
+local RenderImage = require("ui/renderimage")
 local Size = require("ui/size")
 local SpinWidget = require("ui/widget/spinwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -48,7 +50,6 @@ local TITLES = {
 local WEEK_TILES = 4
 local MONTH_COLS, MONTH_ROWS = 3, 3
 local COVER_RATIO = 1.45
-local MAX_HEART_GLYPHS = 24
 
 -- Small widgets --------------------------------------------------------------
 
@@ -73,6 +74,28 @@ function Bar:paintTo(bb, x, y)
         bb:paintRoundedRect(x, y + self.height - fill, self.width, fill,
             self.strong and Theme.accent or Theme.bar, r)
     end
+end
+
+--- The yearly goal bar: a soft rounded track, a gray fill with a thin outline.
+local GoalBar = Widget:extend{
+    width = 0,
+    height = 0,
+    ratio = 0,
+}
+
+function GoalBar:getSize()
+    return Geom:new{ w = self.width, h = self.height }
+end
+
+function GoalBar:paintTo(bb, x, y)
+    self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
+    local r = floor(self.height / 2)
+    bb:paintRoundedRect(x, y, self.width, self.height, Theme.card_bg, r)
+    if self.ratio > 0 then
+        local fill = math.min(self.width, math.max(self.height, floor(self.width * self.ratio + 0.5)))
+        bb:paintRoundedRect(x, y, fill, self.height, Theme.bar, r)
+    end
+    bb:paintBorder(x, y, self.width, self.height, Size.border.thin, Theme.accent, r)
 end
 
 --- Makes any widget tappable.
@@ -268,10 +291,26 @@ function BlossomView:coverBB(md5)
     return self.cover_bbs[md5] or nil
 end
 
+--- The cover scaled to cover w×h completely, trimmed evenly at the sides (a fresh bb).
+local function fillCrop(bb, w, h)
+    local bw, bh = bb:getWidth(), bb:getHeight()
+    local f = math.max(w / bw, h / bh)
+    local sw, sh = math.max(w, math.ceil(bw * f)), math.max(h, math.ceil(bh * f))
+    local scaled = RenderImage:scaleBlitBuffer(bb, sw, sh, false)
+    local out = Blitbuffer.new(w, h, scaled:getType())
+    out:blitFrom(scaled, 0, 0, floor((sw - w) / 2), floor((sh - h) / 2), w, h)
+    if scaled ~= bb then scaled:free() end
+    return out
+end
+
 --- The cover, or a soft placeholder with a flower (and the title if there's room).
-function BlossomView:art(book, w, h, show_title)
+--- With `fill`, the cover fills the whole box (cropped a little) instead of fitting inside it.
+function BlossomView:art(book, w, h, show_title, fill)
     local dimen = Geom:new{ w = w, h = h }
     local bb = self:coverBB(book.md5)
+    if bb and fill then
+        return ImageWidget:new{ image = fillCrop(bb, w, h), image_disposable = true, width = w, height = h }
+    end
     if bb then
         return CenterContainer:new{
             dimen = dimen,
@@ -510,29 +549,44 @@ end
 
 local BOOK_COLS, BOOK_ROWS = 3, 2
 
+--- Gallery tile: the cover edge to edge (thin outline), title and progress below.
+function BlossomView:galleryTile(b, w, cover_h)
+    local prefix = not b.finished and string.format("%d%% · ", floor(b.progress * 100 + 0.5)) or nil
+    return self:tappable(VerticalGroup:new{
+        align = "center",
+        FrameContainer:new{
+            bordersize = Size.border.thin,
+            color = Theme.petal,
+            padding = 0,
+            margin = 0,
+            self:art(b, w - 2 * Size.border.thin, cover_h, true, true),
+        },
+        vspan(6),
+        text(b.title, Theme.face("bold", 14), { max_width = w }),
+        self:timeCaption(b, Theme.face("script", 15), w, prefix),
+    }, b)
+end
+
 --- A gallery of recent covers with % read and time spent.
 function BlossomView:build_books()
     local s = self.stats
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
-    local gap = px(12)
-    local avail = floor((self.content_h - gap * (BOOK_ROWS - 1)) / BOOK_ROWS)
-    local cover_w, cover_h = self:coverSize(BOOK_COLS, gap, avail, 2)
+    local gap_x, gap_y = px(16), px(18)
+    local tile_w = floor((self.inner_w - gap_x * (BOOK_COLS - 1)) / BOOK_COLS)
+    local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(6)
+    local row_h = floor((self.content_h - gap_y * (BOOK_ROWS - 1)) / BOOK_ROWS)
+    local cover_h = math.min(floor(tile_w * COVER_RATIO), row_h - caption_h - 2 * Size.border.thin)
     local group = VerticalGroup:new{ align = "center" }
     local shown = math.min(#s.recent, BOOK_COLS * BOOK_ROWS)
     for r = 1, math.ceil(shown / BOOK_COLS) do
         local row = HorizontalGroup:new{ align = "top" }
         for i = (r - 1) * BOOK_COLS + 1, math.min(shown, r * BOOK_COLS) do
-            local b = s.recent[i]
-            local prefix = not b.finished and string.format("%d%% · ", floor(b.progress * 100 + 0.5)) or nil
-            if #row > 0 then table.insert(row, hspan(gap)) end
-            table.insert(row, self:tile(b, cover_w, cover_h, {
-                text(b.title, Theme.face("bold", 14), { max_width = cover_w }),
-                self:timeCaption(b, Theme.face("script", 15), cover_w, prefix),
-            }))
+            if #row > 0 then table.insert(row, hspan(gap_x)) end
+            table.insert(row, self:galleryTile(s.recent[i], tile_w, cover_h))
         end
-        if r > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
+        if r > 1 then table.insert(group, VerticalSpan:new{ width = gap_y }) end
         table.insert(group, row)
     end
     return group
@@ -725,65 +779,84 @@ function BlossomView:build_month()
     return group
 end
 
---- ♥ for finished books, ♡ for the rest, in rows of 12.
-local function heartRows(finished, goal)
-    local lines = VerticalGroup:new{ align = "center" }
-    local line = {}
-    for i = 1, goal do
-        line[#line + 1] = i <= finished and Theme.heart or Theme.open_heart
-        if #line == 12 or i == goal then
-            table.insert(lines, text(table.concat(line, " "), Theme.face("ui", 22), { color = Theme.accent }))
-            line = {}
-        end
-    end
-    return lines
+--- The goal bar with a bow charm sitting where the fill ends.
+function BlossomView:goalBar(ratio, width)
+    ratio = math.max(0, math.min(1, ratio))
+    local bar_h = px(18)
+    local bow_w = px(38)
+    local bow = Theme.bow(38)
+    local bow_h = floor(bow_w * 0.75)
+    local group_h = math.max(bar_h, bow_h)
+    local bar = GoalBar:new{ width = width, height = bar_h, ratio = ratio }
+    bar.overlap_offset = { 0, floor((group_h - bar_h) / 2) }
+    local fill_x = floor(width * ratio)
+    bow.overlap_offset = { math.max(0, math.min(width - bow_w, fill_x - floor(bow_w / 2))), floor((group_h - bow_h) / 2) }
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = width, h = group_h },
+        bar,
+        bow,
+    }
 end
 
 function BlossomView:build_year()
-    local gap = px(10)
+    local gap = px(20)
     local year = self:period("year:" .. self.this_year, function() return self.loadYear(self.this_year) end)
     local goal = Data.validGoal(self.getGoal and self.getGoal())
     local status = Data.goalStatus(year.finished, goal, self.stats.today)
-    local ribbon_w = floor(self.inner_w * 0.8)
+    local card_inner = cardInner(self.inner_w) - 2 * px(12)
+    local fresh = year.seconds == 0 and year.finished == 0
+
+    -- The goal, in one soft borderless card with room to breathe.
+    local hero = VerticalGroup:new{
+        align = "center",
+        vspan(6),
+        text(string.format(_("my %d reading goal"), self.this_year), Theme.face("script", 16), { color = Theme.soft_ink }),
+        vspan(4),
+        HorizontalGroup:new{
+            align = "center",
+            text(tostring(year.finished), Theme.face("script_bold", 40)),
+            text(string.format(_(" of %d books"), goal), Theme.face("script", 22)),
+        },
+        vspan(12),
+        self:goalBar(year.finished / goal, floor(card_inner * 0.86)),
+        vspan(10),
+    }
+    local pct = floor(math.min(1, year.finished / goal) * 100 + 0.5)
+    table.insert(hero, text(string.format(_("%d%% of my goal"), pct), Theme.face("script_bold", 20)))
+    table.insert(hero, vspan(4))
+    table.insert(hero, text(fresh and _("a fresh year to bloom ❀") or status.message,
+        Theme.face("script", 17), { color = Theme.soft_ink, max_width = card_inner }))
+    table.insert(hero, vspan(14))
+    table.insert(hero, Theme.pillButton(_("✎  change my goal"), function() self:editGoal(goal) end, self))
+    table.insert(hero, vspan(8))
 
     local group = VerticalGroup:new{
         align = "center",
-        Theme.withBow(text(string.format(_("%d of %d books"), year.finished, goal), Theme.face("script_bold", 24)), 28),
-        vspan(4),
+        Theme.card(CenterContainer:new{
+            dimen = Geom:new{ w = cardInner(self.inner_w), h = hero:getSize().h + px(8) },
+            hero,
+        }, { bordersize = 0, radius = px(24) }),
+        VerticalSpan:new{ width = gap },
+        Theme.statStrip({
+            { Data.fmtDuration(year.seconds), _("read") },
+            { tostring(year.pages), _("pages") },
+            { tostring(year.days_read), year.days_read == 1 and _("day") or _("days") },
+        }, self.inner_w),
+        VerticalSpan:new{ width = gap },
+        Theme.rule(_("reading by month"), self.inner_w),
+        vspan(6),
     }
-    if goal <= MAX_HEART_GLYPHS then
-        table.insert(group, heartRows(year.finished, goal))
-        table.insert(group, vspan(6))
-    end
-    table.insert(group, ProgressWidget:new{
-        width = ribbon_w,
-        height = px(16),
-        percentage = math.min(1, year.finished / goal),
-        radius = px(8),
-        margin_h = 0,
-        margin_v = 0,
-        bordersize = Size.border.thin,
-        bordercolor = Theme.accent,
-        bgcolor = Theme.bg,
-        fillcolor = Theme.accent,
-    })
-    table.insert(group, vspan(4))
-    table.insert(group, text(year.seconds == 0 and year.finished == 0 and _("a fresh year to bloom ❀") or status.message,
-        Theme.face("script", 18), { max_width = self.inner_w }))
-    table.insert(group, vspan(6))
-    table.insert(group, self:smallButton(_("✎ set my goal"), function() self:editGoal(goal) end))
-    table.insert(group, VerticalSpan:new{ width = gap })
-    table.insert(group, Theme.card(CenterContainer:new{
-        dimen = Geom:new{ w = cardInner(self.inner_w), h = px(30) },
-        text(string.format(_("%s · %d pages · %d days"), Data.fmtDuration(year.seconds), year.pages, year.days_read),
-            Theme.face("script", 16), { max_width = cardInner(self.inner_w) }),
-    }, { radius = px(18) }))
-    table.insert(group, VerticalSpan:new{ width = gap })
+    hero:resetLayout()
 
-    local bar_h = math.max(px(30), self.content_h - heightOf(group) - px(80))
-    table.insert(group, barChart(year.months, year.best_month, cardInner(self.inner_w),
-        math.min(bar_h, floor(self.content_h * 0.3)), self.this_month))
+    local bar_h = math.max(px(40), math.min(px(170), self.content_h - heightOf(group) - px(64)))
+    table.insert(group, self:monthChart(year, bar_h))
     return group
+end
+
+--- Open (unboxed) month chart: slim bars, ♥ over the best month, this month in bold.
+function BlossomView:monthChart(year, bar_h)
+    local chart = barChart(year.months, year.best_month, self.inner_w, bar_h, self.this_month)
+    return chart[1] -- the bars without the card frame
 end
 
 function BlossomView:editGoal(goal)
@@ -857,5 +930,6 @@ end
 BlossomView.PAGES = PAGES
 BlossomView.Bar = Bar
 BlossomView.Tappable = Tappable
+BlossomView.GoalBar = GoalBar
 
 return BlossomView
