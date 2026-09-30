@@ -53,7 +53,7 @@ local settings_dir = "/kosettings"
 local stubs = {
     ["ffi/blitbuffer"] = { COLOR_WHITE = 0xFF, COLOR_BLACK = 0, Color8 = function(v) return v end },
     ["ui/font"] = { getFace = function(_, name, size) return { name = name, size = size } end },
-    ["ui/size"] = { padding = { default = 5 }, border = { thin = 1 }, radius = { window = 8 } },
+    ["ui/size"] = { padding = { default = 5 }, border = { thin = 1, thick = 2 }, radius = { window = 8 }, line = { thin = 1, medium = 1 } },
     ["ui/geometry"] = { new = function(_, o) return o end },
     ["ui/gesturerange"] = { new = function(_, o) return o end },
     ["device"] = {
@@ -128,7 +128,8 @@ for _, name in ipairs({
     "ui/widget/imagewidget", "ui/widget/infomessage", "ui/widget/container/inputcontainer",
     "ui/widget/overlapgroup", "ui/widget/progresswidget", "ui/widget/textboxwidget",
     "ui/widget/textwidget", "ui/widget/verticalgroup", "ui/widget/verticalspan", "ui/widget/widget",
-    "ui/widget/container/widgetcontainer", "ui/widget/container/leftcontainer", "ui/widget/rectspan", "ui/widget/spinwidget",
+    "ui/widget/container/widgetcontainer", "ui/widget/container/leftcontainer", "ui/widget/rectspan",
+    "ui/widget/linewidget", "ui/widget/spinwidget",
 }) do
     stubs[name] = class(name:match("([^/]+)$"):gsub("^%l", string.upper)
         :gsub("group$", "Group"):gsub("widget$", "Widget"):gsub("span$", "Span"))
@@ -222,9 +223,16 @@ local function texts(w)
     return table.concat(out, "\n")
 end
 
+-- Counts widgets of a kind; ImageWidgets count covers only (not the bow icon).
 local function count(w, kind)
     local n = 0
-    walk(w, function(x) if x.kind == kind then n = n + 1 end end)
+    walk(w, function(x) if x.kind == kind and not x.file then n = n + 1 end end)
+    return n
+end
+
+local function bows(w)
+    local n = 0
+    walk(w, function(x) if x.kind == "ImageWidget" and x.file and x.file:find("icons/bow.svg$") then n = n + 1 end end)
     return n
 end
 
@@ -332,7 +340,7 @@ test("books page is a cover gallery with % and hours, no progress bars", functio
     local view = openView()
     view:goToPage(3)
     local t = texts(view)
-    assert(t:find("Anathema\n♥ · 1h 30m"), t)
+    assert(t:find("Anathema\n1h 30m"), t)
     assert(t:find("Atomic Habits\n25%% · 30m"), t)
     eq(count(view, "ProgressWidget"), 0)
     local tiles = 0
@@ -697,19 +705,20 @@ test("tapping a day shows its books, highlights and bookmarks", function()
     local view = openView()
     local page = openToday(view)
     local t = texts(page)
-    assert(t:find(Data.dayTitle(today), 1, true), t)
-    assert(t:find("2 books · 1 highlight · 1 bookmark"), t)
-    assert(t:find("Books I read"), t)
-    assert(t:find("Anathema"), t)
+    assert(t:find("^˚ ❀ Blossom ❀ ˚\n" .. tonumber(os.date("%d")) .. "\n" .. Data.daySubtitle(today)), t)
+    assert(t:find("1h 00m\nread\n"), t)
+    assert(t:find("1\nhighlight\n1\nbookmark"), t)
+    assert(t:find("books I read"), t)
+    assert(t:find("50m"), t) -- Anathema's time that day, under its cover
     assert(t:find("“She was the storm.”", 1, true), t)
-    assert(t:find("— Anathema · p. 88 · 21:00", 1, true), t)
+    assert(t:find("Anathema · p. 88 · 21:00", 1, true), t)
     assert(t:find("✎ chills ♡", 1, true), t)
-    assert(t:find("☆ Anathema · p. 80 · Nine · 20:00", 1, true), t)
+    assert(t:find("☆  p. 80 · Nine · Anathema · 20:00", 1, true), t)
     assert(not t:find("old one"), t)
     local s, e = Data.dayBounds(today)
     eq(db.period_calls[#db.period_calls], { s, e })
     -- book rows open the book's details
-    local row = findTappable(page, function(x) return x:find("Anathema") end)
+    local row = findTappable(page, function(x) return x:find("50m") end)
     assert(row, "book row tappable")
     page:onSwipe(nil, { direction = "south" })
     eq(closed[#closed] == page, true)
@@ -721,8 +730,7 @@ test("day page: empty notes and many highlights", function()
     local view = openView()
     local page = openToday(view)
     local t = texts(page)
-    assert(t:find("No highlights this day"), t)
-    assert(t:find("No bookmarks this day"), t)
+    assert(t:find("No highlights or bookmarks"), t)
 
     resetDB()
     local many = {}
@@ -743,7 +751,7 @@ test("day page survives unreadable sidecars and old bookmark format", function()
     resetDB()
     db.sidecar_error = "corrupt sidecar"
     local page = openToday(openView())
-    assert(texts(page):find("No highlights this day"))
+    assert(texts(page):find("No highlights or bookmarks"))
     resetDB()
     db.sidecar = { ["/books/a.epub"] = { bookmarks = {
         { datetime = today .. " 09:00:00", highlighted = true, notes = "legacy quote", page = 5 },
@@ -768,6 +776,27 @@ test("in the reader, book settings are saved first so today's notes are on disk"
     local saved = 0
     openView({ document = {}, saveSettings = function() saved = saved + 1 end })
     eq(saved, 1)
+end)
+
+test("bows: in every header, on finished books and the year title", function()
+    resetDB()
+    local view = openView()
+    eq(bows(view), 1) -- header ribbon
+    view:goToPage(3)
+    eq(bows(view), 2) -- header + finished Anathema
+    view:goToPage(5)
+    eq(bows(view), 2) -- header + "1 of 12 books"
+    view:openBook(2)
+    eq(bows(shown[#shown]), 1) -- unfinished book: header only
+end)
+
+test("pagination hearts are small", function()
+    resetDB()
+    local view = openView()
+    local dots
+    walk(view, function(n) if n.text == "♥ ♡ ♡ ♡ ♡" then dots = n end end)
+    assert(dots, "compact heart dots")
+    eq(dots.face.size, 13)
 end)
 
 H.done()

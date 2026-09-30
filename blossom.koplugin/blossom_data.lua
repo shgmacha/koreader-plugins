@@ -349,6 +349,11 @@ function Data.dayTitle(date)
     return out
 end
 
+--- "Wednesday · September 2026"
+function Data.daySubtitle(date)
+    return os.date("%A · %B %Y", noon(date))
+end
+
 --- Highlights and bookmarks created on `date`.
 --- books = {{ title, id, annotations = {...} (KOReader >= 2024), bookmarks = {...} (older sidecars) }}
 function Data.annotationsForDay(books, date)

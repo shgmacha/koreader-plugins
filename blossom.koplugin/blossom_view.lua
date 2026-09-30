@@ -208,8 +208,8 @@ function BlossomView:buildFooter()
         return Button:new{
             text = glyph,
             bordersize = 0,
-            width = px(70),
-            text_font_size = 30,
+            width = px(56),
+            text_font_size = 24,
             callback = fn,
             show_parent = self,
         }
@@ -219,9 +219,9 @@ function BlossomView:buildFooter()
         HorizontalGroup:new{
             align = "center",
             arrow("‹", function() self:onPrevPage() end),
-            hspan(px(12)),
-            text(table.concat(dots, "  "), Theme.face("ui", 20), { color = Theme.accent }),
-            hspan(px(12)),
+            hspan(px(8)),
+            text(table.concat(dots, " "), Theme.face("ui", 13), { color = Theme.accent }),
+            hspan(px(8)),
             arrow("›", function() self:onNextPage() end),
         },
         vspan(6),
@@ -309,10 +309,7 @@ end
 
 --- A polaroid-style tile: cover (or a cute placeholder) and caption lines.
 function BlossomView:tile(book, cover_w, cover_h, captions)
-    captions = captions or {
-        text(Data.fmtDuration(book.seconds) .. (book.finished and (" " .. Theme.heart) or ""),
-            Theme.face("script", 14), { max_width = cover_w }),
-    }
+    captions = captions or { self:timeCaption(book, Theme.face("script", 14), cover_w) }
     local body = VerticalGroup:new{ align = "center", self:art(book, cover_w, cover_h, true) }
     for _, line in ipairs(captions) do table.insert(body, line) end
     return self:tappable(FrameContainer:new{
@@ -324,6 +321,13 @@ function BlossomView:tile(book, cover_w, cover_h, captions)
         margin = 0,
         body,
     }, book)
+end
+
+--- "5h 27m", with a bow in front when the book is finished.
+function BlossomView:timeCaption(book, face, max_w, prefix)
+    local label = text((prefix or "") .. Data.fmtDuration(book.seconds), face, { max_width = max_w })
+    if book.finished then return Theme.withBow(label, 18, "left") end
+    return label
 end
 
 local TILE_PAD = 4
@@ -521,13 +525,11 @@ function BlossomView:build_books()
         local row = HorizontalGroup:new{ align = "top" }
         for i = (r - 1) * BOOK_COLS + 1, math.min(shown, r * BOOK_COLS) do
             local b = s.recent[i]
-            local status = b.finished
-                and string.format("%s · %s", Theme.heart, Data.fmtDuration(b.seconds))
-                or string.format("%d%% · %s", floor(b.progress * 100 + 0.5), Data.fmtDuration(b.seconds))
+            local prefix = not b.finished and string.format("%d%% · ", floor(b.progress * 100 + 0.5)) or nil
             if #row > 0 then table.insert(row, hspan(gap)) end
             table.insert(row, self:tile(b, cover_w, cover_h, {
                 text(b.title, Theme.face("bold", 14), { max_width = cover_w }),
-                text(status, Theme.face("script", 15), { max_width = cover_w }),
+                self:timeCaption(b, Theme.face("script", 15), cover_w, prefix),
             }))
         end
         if r > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
@@ -746,7 +748,7 @@ function BlossomView:build_year()
 
     local group = VerticalGroup:new{
         align = "center",
-        text(string.format(_("%d of %d books %s"), year.finished, goal, Theme.flower), Theme.face("script_bold", 24)),
+        Theme.withBow(text(string.format(_("%d of %d books"), year.finished, goal), Theme.face("script_bold", 24)), 28),
         vspan(4),
     }
     if goal <= MAX_HEART_GLYPHS then

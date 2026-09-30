@@ -100,8 +100,8 @@ function BlossomDetail:build()
             fillcolor = Theme.accent,
         },
         vspan(4),
-        text(b.finished and string.format(_("finished %s"), Theme.heart) or string.format(_("%d%% read"), pct),
-            Theme.face("script", 17), { max_width = info_w }),
+        b.finished and Theme.withBow(text(_("finished"), Theme.face("script", 17)), 22)
+            or text(string.format(_("%d%% read"), pct), Theme.face("script", 17), { max_width = info_w }),
         text(b.total_pages > 0 and string.format(_("%d of %d pages"), math.min(b.read_pages, b.total_pages), b.total_pages) or " ",
             Theme.face("ui", 14), { color = Theme.soft_ink, max_width = info_w }),
     }
