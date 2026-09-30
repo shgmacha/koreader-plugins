@@ -724,7 +724,7 @@ function BlossomView:build_books()
         table.insert(shelf, vspan(14))
         table.insert(shelf, Tappable:new{
             callback = function() self:openMore("shelf") end,
-            text(string.format(_("See more … %s"), Theme.flower), Theme.face("script", 17), { color = Theme.soft_ink }),
+            text(_("See more …"), Theme.face("script", 17), { color = Theme.soft_ink }),
         })
     end
     return CenterContainer:new{

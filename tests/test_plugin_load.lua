@@ -427,8 +427,8 @@ test("books gallery shows at most 8 covers, 4 per row", function()
     eq(tiles, 8)
     eq(pagerState(view), nil) -- no second pager on My books
     -- "See more …" opens the whole shelf, paged, without title lines
-    local link = findTappable(view, function(x) return x:find("^See more …") end)
-    assert(link, "See more link")
+    local link = findTappable(view, function(x) return x == "See more …" end)
+    assert(link, "See more link, no flower")
     link:onTap()
     local shelf = shown[#shown]
     eq(getmetatable(shelf) == require("blossom_more"), true)
