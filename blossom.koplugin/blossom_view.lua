@@ -49,7 +49,8 @@ local TITLES = {
     year = _("My year"),
 }
 local WEEK_TILES = 4
-local BOOK_COLS, BOOK_ROWS = 3, 2 -- gallery grids (My books, This month)
+local BOOK_COLS, BOOK_ROWS = 3, 2 -- This month gallery
+local SHELF_COLS, SHELF_ROWS = 4, 2 -- My books gallery
 local COVER_RATIO = 1.45
 
 -- Small widgets --------------------------------------------------------------
@@ -107,7 +108,8 @@ local function heightOf(group)
 end
 
 --- A column chart of `values` ({label, seconds}), ♥ above the best one.
-local function barChart(values, best, width, bar_h, today_index)
+local function barChart(values, best, width, bar_h, today_index, small)
+    local top_size, label_size = small and 11 or 12, small and 13 or 14
     local max = 0
     for _, v in ipairs(values) do max = math.max(max, v.seconds) end
     local col_w = floor(width / #values)
@@ -119,7 +121,7 @@ local function barChart(values, best, width, bar_h, today_index)
             dimen = Geom:new{ w = col_w, h = bar_h + px(56) },
             VerticalGroup:new{
                 align = "center",
-                text(top, Theme.face("ui", 12), { color = Theme.soft_ink, max_width = col_w }),
+                text(top, Theme.face("ui", top_size), { color = Theme.soft_ink, max_width = col_w }),
                 vspan(2),
                 Bar:new{
                     width = math.max(px(6), floor(col_w * 0.36)),
@@ -128,7 +130,7 @@ local function barChart(values, best, width, bar_h, today_index)
                     strong = i == best,
                 },
                 vspan(2),
-                text(v.label, Theme.face(i == today_index and "bold" or "ui", 14)),
+                text(v.label, Theme.face(i == today_index and "bold" or "ui", label_size)),
             },
         })
     end
@@ -420,15 +422,13 @@ function BlossomView:build_overview()
     local garden = VerticalGroup:new{
         align = "center",
         text(Data.greeting(self.hour), Theme.face("script", 24)),
-        vspan(34),
-        Theme.rule(_("my garden in numbers"), math.min(self.inner_w, px(600))),
-        vspan(28),
+        vspan(6),
+        text(Data.affirmation(s.today), Theme.face("script", 16), { color = Theme.soft_ink }),
+        vspan(40),
         stats,
         vspan(30),
         text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
             Theme.face("script", 15), { color = Theme.soft_ink }),
-        vspan(40),
-        Theme.withBow(text(Data.affirmation(s.today), Theme.face("script", 19)), 24, "left"),
     }
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },
@@ -443,12 +443,12 @@ function BlossomView:build_week()
     local headline = VerticalGroup:new{
         align = "center",
         text(string.format(_("%s of reading %s"), Data.fmtDuration(s.week_seconds), Theme.open_heart),
-            Theme.face("script_bold", 22)),
+            Theme.face("script_bold", 18)),
         text(best and string.format(_("best day: %s %s"), os.date("%A", os.time{
                 year = tonumber(best.date:sub(1, 4)), month = tonumber(best.date:sub(6, 7)),
                 day = tonumber(best.date:sub(9, 10)), hour = 12 }), Theme.heart)
             or _("a fresh week to bloom ❀"),
-            Theme.face("script", 16), { color = Theme.soft_ink }),
+            Theme.face("script", 14), { color = Theme.soft_ink }),
     }
     local days = {}
     for i, day in ipairs(s.week) do
@@ -456,21 +456,21 @@ function BlossomView:build_week()
                     top = day.seconds > 0 and Data.fmtDuration(day.seconds) or nil }
     end
     -- The bars without a frame, then how the week went.
-    local chart = barChart(days, s.best_day_index, self.inner_w,
-        math.max(px(40), floor(self.content_h * 0.28)), #days)[1]
+    local chart = barChart(days, s.best_day_index, floor(self.inner_w * 0.82),
+        math.max(px(40), floor(self.content_h * 0.2)), #days, true)[1]
 
     local group = VerticalGroup:new{
         align = "center",
         vspan(20),
         chart,
-        vspan(12),
+        vspan(10),
         headline,
-        vspan(24),
+        vspan(48),
     }
 
     local week = self:period("week", self.loadWeek)
-    table.insert(group, text(_("Books that kept me company ♡"), Theme.face("script_bold", 18)))
-    table.insert(group, vspan(6))
+    table.insert(group, text(_("Books that kept me company ♡"), Theme.face("script_bold", 16)))
+    table.insert(group, vspan(12))
     if week.books == 0 then
         table.insert(group, text(_("No books yet this week ❀"), Theme.face("script", 16), { color = Theme.soft_ink }))
         return group
@@ -487,6 +487,7 @@ function BlossomView:build_week()
         end
     else
         -- Just the covers, each in a soft rounded frame, shaped like a book.
+        cover_h = math.min(cover_h, px(150))
         cover_w = math.min(cover_w, floor(cover_h / COVER_RATIO))
         cover_h = floor(cover_w * COVER_RATIO)
         local row = HorizontalGroup:new{ align = "top" }
@@ -543,26 +544,27 @@ function BlossomView:build_books()
     -- A touch smaller than the full page, centred, so the gallery can breathe.
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },
-        self:galleryGrid(s.recent, floor(self.content_h * 0.86)),
+        self:galleryGrid(s.recent, floor(self.content_h * 0.86), SHELF_COLS, SHELF_ROWS),
     }
 end
 
 --- Up to 3×2 framed covers fitting `avail_h`; narrower tiles when height is tight,
 --- so covers keep their book shape.
-function BlossomView:galleryGrid(books, avail_h)
-    local gap_x, gap_y = px(16), px(18)
+function BlossomView:galleryGrid(books, avail_h, cols, rows)
+    cols, rows = cols or BOOK_COLS, rows or BOOK_ROWS
+    local gap_x, gap_y = px(cols > 3 and 12 or 16), px(18)
     local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
     local border = 2 * Size.border.thin
-    local row_h = floor((avail_h - gap_y * (BOOK_ROWS - 1)) / BOOK_ROWS)
+    local row_h = floor((avail_h - gap_y * (rows - 1)) / rows)
     local cover_h = row_h - caption_h - border
-    local tile_w = math.min(floor((self.inner_w - gap_x * (BOOK_COLS - 1)) / BOOK_COLS),
+    local tile_w = math.min(floor((self.inner_w - gap_x * (cols - 1)) / cols),
                             floor(cover_h / COVER_RATIO) + border)
     cover_h = math.min(cover_h, floor((tile_w - border) * COVER_RATIO))
     local group = VerticalGroup:new{ align = "center" }
-    local shown = math.min(#books, BOOK_COLS * BOOK_ROWS)
-    for r = 1, math.ceil(shown / BOOK_COLS) do
+    local shown = math.min(#books, cols * rows)
+    for r = 1, math.ceil(shown / cols) do
         local row = HorizontalGroup:new{ align = "top" }
-        for i = (r - 1) * BOOK_COLS + 1, math.min(shown, r * BOOK_COLS) do
+        for i = (r - 1) * cols + 1, math.min(shown, r * cols) do
             if #row > 0 then table.insert(row, hspan(gap_x)) end
             table.insert(row, self:galleryTile(books[i], tile_w, cover_h))
         end
@@ -718,25 +720,19 @@ function BlossomView:build_month()
             show_parent = self,
         }
     end
-    -- "[▦]  ‹ September 2026 ›  [❀]": framed icon buttons; the view you're on has a bolder frame.
+    -- "▦  ‹ September 2026 ›  ❀": plain icons; the view you're on is black, the other soft gray.
     local function mode(label, key)
         local active = self.month_mode == key
-        return Button:new{
-            text = label,
-            bordersize = active and Size.border.thick or Size.border.thin,
-            radius = px(12),
-            padding_h = px(10),
-            padding_v = px(4),
-            text_font_face = "cfont",
-            text_font_size = 18,
-            text_font_bold = active,
+        local icon = text(label, Theme.face("ui", 22), { color = active and Theme.ink or Theme.bar })
+        icon.mode_key, icon.active = key, active
+        return Tappable:new{
             callback = function()
                 if self.month_mode ~= key then
                     self.month_mode = key
                     self:refresh()
                 end
             end,
-            show_parent = self,
+            CenterContainer:new{ dimen = Geom:new{ w = px(48), h = px(44) }, icon },
         }
     end
     local left, right = mode("▦", "calendar"), mode("❀", "covers")

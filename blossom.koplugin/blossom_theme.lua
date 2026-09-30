@@ -150,8 +150,8 @@ end
 --- The wavy goal line with a heart riding it where you are.
 function Theme.wave(ratio, width)
     ratio = math.max(0, math.min(1, ratio))
-    local heart_w = Theme.px(30)
-    local heart = Theme.heartIcon(30)
+    local heart_w = Theme.px(16)
+    local heart = Theme.heartIcon(16)
     local heart_h = math.floor(heart_w * 44 / 48)
     local amplitude = Theme.px(6)
     local mid = Theme.px(2) + amplitude + math.floor(heart_h / 2)
@@ -298,10 +298,10 @@ end
 
 --- "· ♡ ·  bow  · ♡ ·" decoration line.
 function Theme.ribbon(size)
-    local function side() return Theme.text("· ♡ ·", Theme.face("ui", 14), { color = Theme.accent }) end
+    local function side() return Theme.text("· ♡ ·", Theme.face("ui", 12), { color = Theme.accent }) end
     return HorizontalGroup:new{
         align = "center",
-        side(), HorizontalSpan:new{ width = Theme.px(8) }, Theme.bow(size or 26),
+        side(), HorizontalSpan:new{ width = Theme.px(8) }, Theme.bow(size or 22),
         HorizontalSpan:new{ width = Theme.px(8) }, side(),
     }
 end
@@ -345,11 +345,11 @@ function Theme.header(title, width, on_close, show_parent, opts)
     local titles = VerticalGroup:new{
         align = "center",
         Theme.vspan(8),
-        Theme.text("˚ ❀ Blossom ❀ ˚", Theme.face("ui", 14), { color = Theme.soft_ink }),
-        Theme.text(title, Theme.face("script_bold", opts.title_size or 28), { max_width = width - Theme.px(120) }),
+        Theme.text("˚ ❀ Blossom ❀ ˚", Theme.face("ui", 12), { color = Theme.soft_ink }),
+        Theme.text(title, Theme.face("script_bold", opts.title_size or 23), { max_width = width - Theme.px(120) }),
     }
     if opts.subtitle then
-        table.insert(titles, Theme.text(opts.subtitle, Theme.face("script", 17), { color = Theme.soft_ink }))
+        table.insert(titles, Theme.text(opts.subtitle, Theme.face("script", 15), { color = Theme.soft_ink }))
     end
     table.insert(titles, Theme.vspan(2))
     table.insert(titles, Theme.ribbon())

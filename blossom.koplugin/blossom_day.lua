@@ -39,7 +39,7 @@ local BlossomDay = InputContainer:extend{
 function BlossomDay:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    self.inner_w = self.width - 2 * px(16)
+    self.inner_w = self.width - 2 * px(34)
     if Device:isTouchDevice() then
         self.ges_events = {
             Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
@@ -89,7 +89,7 @@ function BlossomDay:build()
     local gap = px(12)
     local d = select(3, Data.parseDate(day.date))
     local header = Theme.header(tostring(d), self.width, function() self:onClose() end, self, {
-        title_size = 40,
+        title_size = 34,
         subtitle = Data.daySubtitle(day.date),
     })
     local notes = day.notes or { highlights = {}, bookmarks = {} }
@@ -100,7 +100,7 @@ function BlossomDay:build()
     local function room()
         local h = content:getSize().h
         content:resetLayout()
-        return self.height - header_h - h - px(24)
+        return self.height - header_h - h - px(48)
     end
 
     add(Theme.statStrip({
@@ -181,7 +181,7 @@ function BlossomDay:build()
         VerticalGroup:new{
             align = "center",
             header,
-            vspan(10),
+            vspan(22),
             content,
         },
     }

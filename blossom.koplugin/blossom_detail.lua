@@ -36,7 +36,7 @@ local BlossomDetail = InputContainer:extend{
 function BlossomDetail:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    self.inner_w = self.width - 2 * px(16)
+    self.inner_w = self.width - 2 * px(34)
     if Device:isTouchDevice() then
         self.ges_events = {
             Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
@@ -148,7 +148,7 @@ function BlossomDetail:build()
     local function room()
         local h = content:getSize().h
         content:resetLayout()
-        return self.height - header:getSize().h - h - px(20)
+        return self.height - header:getSize().h - h - px(48)
     end
     local list = b.highlight_list or {}
     if #list == 0 then
@@ -163,7 +163,12 @@ function BlossomDetail:build()
             meta[#meta + 1] = h.date
             local q = Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 3)
             local more_h = i < #list and px(22) or 0
-            if q:getSize().h + px(18) + more_h > room() then q:free(); break end
+            if q:getSize().h + px(18) + more_h > room() and shown == 0 then
+                -- Always show at least one: a shorter version of the first highlight.
+                q:free()
+                q = Theme.quote(h.text, table.concat(meta, " · "), nil, self.inner_w, 2)
+            end
+            if q:getSize().h + px(18) + more_h > room() and shown > 0 then q:free(); break end
             if i > 1 then table.insert(content, vspan(18)) end
             table.insert(content, q)
             shown = i
@@ -185,7 +190,7 @@ function BlossomDetail:build()
         VerticalGroup:new{
             align = "center",
             header,
-            vspan(10),
+            vspan(22),
             content,
         },
     }

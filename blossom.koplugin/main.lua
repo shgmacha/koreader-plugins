@@ -18,7 +18,7 @@ local BlossomView = require("blossom_view")
 local Covers = require("blossom_covers")
 local Data = require("blossom_data")
 
-local RECENT_BOOKS = 6
+local RECENT_BOOKS = 8
 
 local SQL_TOTALS = [[
     SELECT count(*), sum(total_read_time), sum(total_read_pages)

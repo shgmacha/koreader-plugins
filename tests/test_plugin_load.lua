@@ -321,7 +321,7 @@ test("week page: frameless chart, summary below it, covers; no flower row", func
     local t = texts(view)
     assert(t:find("Books that kept me company"), t)
     assert(not t:find("my last 14 days"), t)
-    assert(t:find("We\n30m of reading ♡\nbest day: "), t) -- summary right after the chart
+    assert(t:find(Data.weekdayLabel(today) .. "\n30m of reading ♡\nbest day: "), t) -- summary right after the chart
     walk(view, function(n) assert(not (n.kind == "Framecontainer" and n.bordersize == 1 and n.background == 0xFF and n.padding ~= 0 and n.radius == 8 and not n.overlap_offset and n[1] and n[1].kind == "Horizontalgroup"), "no chart frame") end)
     eq(count(view, "ImageWidget"), 1)
     assert(t:find("❀\nLost"), "placeholder tile for unknown book")
@@ -376,7 +376,7 @@ test("books page is an edge-to-edge cover gallery with % and hours", function()
     eq(tiles, 2)
 end)
 
-test("books gallery shows at most 6 covers", function()
+test("books gallery shows at most 8 covers, 4 per row", function()
     resetDB()
     local list = {}
     for i = 1, 9 do list[i] = { i, "Book " .. i, "A", "m" .. i, 100, 10, 60 } end
@@ -385,7 +385,18 @@ test("books gallery shows at most 6 covers", function()
     view:goToPage(3)
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
-    eq(tiles, 6)
+    eq(tiles, 8)
+    local rows = 0
+    walk(view, function(n)
+        if n.kind == "HorizontalGroup" then
+            local frames = 0
+            for _, c in ipairs(n) do
+                walk(c, function(x) if getmetatable(x) == BlossomView.RoundedFrame then frames = frames + 1 end end)
+            end
+            if frames == 4 then rows = rows + 1 end
+        end
+    end)
+    eq(rows, 2)
 end)
 
 test("month page: covers grid, navigation, no future months", function()
@@ -585,13 +596,22 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     resetDB()
     local view = openView()
     view:goToPage(4)
-    -- header: ▦ Calendar ‹ Month › ❀ Covers, the active mode outlined + bold
+    -- header: ▦ ‹ Month › ❀ as plain icons (no frames); active black, inactive gray
     local t0 = texts(view)
     assert(t0:find("▦\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n❀\n"), t0)
-    local cal_btn, cov_btn
-    walk(view, function(n) if n.text == "▦" then cal_btn = n elseif n.text == "❀" and n.callback then cov_btn = n end end)
-    eq({ cov_btn.text_font_bold, cal_btn.text_font_bold, cal_btn.bordersize, cov_btn.bordersize }, { true, false, 1, 2 })
-    cal_btn.callback()
+    local function modeButtons()
+        local btns, icons = {}, {}
+        walk(view, function(n)
+            if getmetatable(n) == BlossomView.Tappable then
+                walk(n, function(c) if c.mode_key then btns[c.mode_key], icons[c.mode_key] = n, c end end)
+            end
+        end)
+        return btns, icons
+    end
+    local btns, icons = modeButtons()
+    eq({ icons.covers.active, icons.calendar.active, icons.covers.fgcolor, icons.calendar.fgcolor }, { true, false, 0, 0x99 })
+    walk(btns.calendar, function(n) assert(n.kind ~= "Framecontainer", "icons have no frame") end)
+    btns.calendar:onTap()
     eq(view.month_mode, "calendar")
     local t = texts(view)
     assert(t:find("Su\nMo\nTu"), t)
@@ -606,8 +626,8 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     -- previous month keeps calendar mode
     view:shiftMonth(-1)
     assert(texts(view):find("less"))
-    walk(view, function(n) if n.text == "❀" and n.callback then cov_btn = n end end)
-    cov_btn.callback()
+    btns = modeButtons()
+    btns.covers:onTap()
     eq(view.month_mode, "covers")
 end)
 
@@ -848,10 +868,13 @@ test("days without reading are not tappable", function()
     resetDB()
     local view = openView()
     view.month_mode = "calendar"
-    view:shiftMonth(-1)
+    view:shiftMonth(-3) -- a month with no reading at all
     view:goToPage(4)
     local n = 0
-    walk(view, function(x) if getmetatable(x) == BlossomView.Tappable then n = n + 1 end end)
+    walk(view, function(x)
+        local tx = getmetatable(x) == BlossomView.Tappable and texts(x)
+        if tx and tx ~= "▦" and tx ~= "❀" then n = n + 1 end
+    end)
     eq(n, 0)
 end)
 
@@ -865,7 +888,7 @@ end)
 test("bows: in every header, on finished books and the year title", function()
     resetDB()
     local view = openView()
-    eq(bows(view), 2) -- header ribbon + the garden's affirmation
+    eq(bows(view), 1) -- header ribbon (the garden's affirmation has no bow now)
     view:goToPage(3)
     eq(bows(view), 2) -- header + finished Anathema
     view:goToPage(5)
@@ -904,17 +927,18 @@ test("goal wave clamps its fill and keeps the heart on the line", function()
     local view = openView()
     local full = view:goalWave(1.7, 400)
     eq(full[1].ratio, 1)
-    eq(full[2].overlap_offset[1], 400 - 30)
+    eq(full[2].overlap_offset[1], 400 - 16)
     local empty = view:goalWave(0, 400)
     eq(empty[1].ratio, 0)
     eq(empty[2].overlap_offset[1], 0)
     local half = view:goalWave(0.5, 400)
-    eq(half[2].overlap_offset[1], 200 - 15)
+    eq(half[2].overlap_offset[1], 200 - 8)
+    eq(full[2].width, 16) -- a small heart
     -- the heart sits on the wave: its centre is at the wave's height there
     local w = half[1]
-    local hy = half[2].overlap_offset[2] + math.floor(30 * 44 / 48 / 2)
+    local hy = half[2].overlap_offset[2] + math.floor(16 * 44 / 48 / 2)
     assert(math.abs(hy - w:waveY(200)) <= 2, "heart rides the wave (within rounding)")
-    assert(half[2].overlap_offset[2] >= 0 and half[2].overlap_offset[2] + 27 <= w.height, "heart inside the widget")
+    assert(half[2].overlap_offset[2] >= 0 and half[2].overlap_offset[2] + 14 <= w.height, "heart inside the widget")
 end)
 
 test("rounded frame paints content, trims corners, then the border", function()
@@ -979,7 +1003,11 @@ test("garden is frameless and centred vertically", function()
     walk(content, function(n) if n.kind == "Framecontainer" then frames = frames + 1 end end)
     eq(frames, 0)
     local t = texts(content)
-    assert(t:find("my garden in numbers"), t)
+    assert(not t:find("my garden in numbers"), t)
+    assert(t:find("\n" .. Data.affirmation(today) .. "\n❀ 3\n", 1, true), t) -- affirmation right under the greeting
+    local aff
+    walk(content, function(n) if n.text == Data.affirmation(today) then aff = n end end)
+    eq({ aff.fgcolor, aff.face.size, aff.face.name }, { 0x55, 16, "NotoSerif-Italic.ttf" }) -- small, slanted, gray
     assert(t:find("❀ 3\nbooks loved\n♡ 2h 30m\nof stories\n❀ 420\npages turned\n♥ 2\ndays streak"), t)
     assert(t:find("longest streak: 2 days ☆"), t)
 end)
@@ -1039,6 +1067,24 @@ test("calendar day cells keep their full size", function()
     end)
     assert(#sizes >= 28)
     for _, ok in ipairs(sizes) do assert(ok, "a day cell shrank to its content") end
+end)
+
+test("book details always show at least one highlight", function()
+    resetDB()
+    Screen.h = 440
+    db.book = function()
+        return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
+    end
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { description = string.rep("words ", 60) }, annotations = {
+        { datetime = "2026-08-01 10:00:00", drawer = "lighten", text = string.rep("long ", 80), note = "note" },
+        { datetime = "2026-08-02 10:00:00", drawer = "lighten", text = "second" },
+    } } }
+    local view = openView()
+    view:openBook(1)
+    local t = texts(shown[#shown])
+    assert(t:find("“long", 1, true), t)
+    assert(not t:find("✎ note", 1, true), "the shortened first highlight drops its note")
+    assert(t:find("+1 more highlights"), t)
 end)
 
 H.done()
