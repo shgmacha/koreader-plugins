@@ -48,7 +48,7 @@ local TITLES = {
     year = _("My year"),
 }
 local WEEK_TILES = 4
-local MONTH_COLS, MONTH_ROWS = 3, 3
+local BOOK_COLS, BOOK_ROWS = 3, 2 -- gallery grids (My books, This month)
 local COVER_RATIO = 1.45
 
 -- Small widgets --------------------------------------------------------------
@@ -451,38 +451,40 @@ function BlossomView:build_overview()
             and _("Couldn't open your reading statistics. Is the Statistics plugin enabled? ♡")
             or _("Your garden is waiting to bloom ❀\nStart reading and your stats will grow here."))
     end
-    local gap = px(10)
-    local card_w = floor((self.inner_w - gap) / 2)
+    -- A narrower, lighter grid centred on the page, with room around it.
+    local gap = px(14)
+    local grid_w = math.min(self.inner_w, px(520))
+    local card_w = floor((grid_w - gap) / 2)
     local inner = cardInner(card_w)
-    local greeting = text(Data.greeting(self.hour), Theme.face("script", 22))
+    local greeting = text(Data.greeting(self.hour), Theme.face("script", 21))
     local pill = Theme.card(CenterContainer:new{
-        dimen = Geom:new{ w = cardInner(self.inner_w), h = px(34) },
-        text(Data.affirmation(s.today), Theme.face("script", 18), { max_width = cardInner(self.inner_w) }),
-    }, { radius = px(20) })
+        dimen = Geom:new{ w = cardInner(grid_w), h = px(30) },
+        text(Data.affirmation(s.today), Theme.face("script", 16), { max_width = cardInner(grid_w) }),
+    }, { radius = px(16) })
     local longest = text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
-        Theme.face("script", 16), { color = Theme.soft_ink })
+        Theme.face("script", 15), { color = Theme.soft_ink })
 
-    local fixed = greeting:getSize().h + pill:getSize().h + longest:getSize().h + gap * 5
-    local card_h = math.min(px(84), floor((self.content_h - fixed) / 3) - 2 * (Size.padding.default + Size.border.thin))
+    local fixed = greeting:getSize().h + pill:getSize().h + longest:getSize().h + gap * 6
+    local card_h = math.min(px(62), floor((self.content_h - fixed) / 3) - 2 * (Size.padding.default + Size.border.thin))
 
     local function stat(glyph, value, label)
         return Theme.card(CenterContainer:new{
             dimen = Geom:new{ w = inner, h = card_h },
             VerticalGroup:new{
                 align = "center",
-                text(glyph .. " " .. value, Theme.face("bold", 22), { max_width = inner }),
-                text(label, Theme.face("script", 16), { color = Theme.soft_ink, max_width = inner }),
+                text(glyph .. " " .. value, Theme.face("bold", 19), { max_width = inner }),
+                text(label, Theme.face("script", 14), { color = Theme.soft_ink, max_width = inner }),
             },
-        })
+        }, { radius = px(12) })
     end
     local function row(a, b)
         return HorizontalGroup:new{ a, hspan(gap), b }
     end
     local streak_label = s.streak == 1 and _("day streak") or _("days streak")
-    return VerticalGroup:new{
+    local garden = VerticalGroup:new{
         align = "center",
         greeting,
-        vspan(6),
+        vspan(10),
         row(stat(Theme.flower, tostring(s.books), _("books loved")),
             stat(Theme.open_heart, Data.fmtDuration(s.seconds), _("of stories"))),
         VerticalSpan:new{ width = gap },
@@ -495,6 +497,10 @@ function BlossomView:build_overview()
         longest,
         VerticalSpan:new{ width = gap },
         pill,
+    }
+    return CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = self.content_h },
+        garden,
     }
 end
 
@@ -565,7 +571,6 @@ function BlossomView:build_week()
     return group
 end
 
-local BOOK_COLS, BOOK_ROWS = 3, 2
 
 --- Gallery tile: one rounded frame holding the cover edge to edge, then title and progress.
 function BlossomView:galleryTile(b, w, cover_h)
@@ -596,18 +601,27 @@ function BlossomView:build_books()
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
+    return self:galleryGrid(s.recent, self.content_h)
+end
+
+--- Up to 3×2 framed covers fitting `avail_h`; narrower tiles when height is tight,
+--- so covers keep their book shape.
+function BlossomView:galleryGrid(books, avail_h)
     local gap_x, gap_y = px(16), px(18)
-    local tile_w = floor((self.inner_w - gap_x * (BOOK_COLS - 1)) / BOOK_COLS)
     local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
-    local row_h = floor((self.content_h - gap_y * (BOOK_ROWS - 1)) / BOOK_ROWS)
-    local cover_h = math.min(floor(tile_w * COVER_RATIO), row_h - caption_h - 2 * Size.border.thin)
+    local border = 2 * Size.border.thin
+    local row_h = floor((avail_h - gap_y * (BOOK_ROWS - 1)) / BOOK_ROWS)
+    local cover_h = row_h - caption_h - border
+    local tile_w = math.min(floor((self.inner_w - gap_x * (BOOK_COLS - 1)) / BOOK_COLS),
+                            floor(cover_h / COVER_RATIO) + border)
+    cover_h = math.min(cover_h, floor((tile_w - border) * COVER_RATIO))
     local group = VerticalGroup:new{ align = "center" }
-    local shown = math.min(#s.recent, BOOK_COLS * BOOK_ROWS)
+    local shown = math.min(#books, BOOK_COLS * BOOK_ROWS)
     for r = 1, math.ceil(shown / BOOK_COLS) do
         local row = HorizontalGroup:new{ align = "top" }
         for i = (r - 1) * BOOK_COLS + 1, math.min(shown, r * BOOK_COLS) do
             if #row > 0 then table.insert(row, hspan(gap_x)) end
-            table.insert(row, self:galleryTile(s.recent[i], tile_w, cover_h))
+            table.insert(row, self:galleryTile(books[i], tile_w, cover_h))
         end
         if r > 1 then table.insert(group, VerticalSpan:new{ width = gap_y }) end
         table.insert(group, row)
@@ -757,21 +771,21 @@ function BlossomView:build_month()
     }
     local summary = string.format(_("%s · %d pages · %d days · %d books"),
         Data.fmtDuration(month.seconds), month.pages, month.days_read, month.books)
-    local pill = Theme.card(CenterContainer:new{
-        dimen = Geom:new{ w = cardInner(self.inner_w), h = px(30) },
-        text(summary, Theme.face("script", 16), { max_width = cardInner(self.inner_w) }),
-    }, { radius = px(18) })
+    -- Summary and the covers/calendar switch share one line, leaving room for the covers.
     local toggle = self:smallButton(calendar_mode and _("❀ covers") or _("▦ calendar"), function()
         self.month_mode = calendar_mode and "covers" or "calendar"
         self:refresh()
     end)
+    local pill_w = self.inner_w - toggle:getSize().w - px(10)
+    local pill = Theme.card(CenterContainer:new{
+        dimen = Geom:new{ w = cardInner(pill_w), h = px(30) },
+        text(summary, Theme.face("script", 15), { max_width = cardInner(pill_w) }),
+    }, { radius = px(18) })
 
     local group = VerticalGroup:new{
         align = "center",
         switcher,
-        pill,
-        vspan(6),
-        toggle,
+        HorizontalGroup:new{ align = "center", pill, hspan(px(10)), toggle },
         VerticalSpan:new{ width = gap },
     }
     if calendar_mode then
@@ -784,18 +798,11 @@ function BlossomView:build_month()
         return group
     end
 
-    local max_tiles = MONTH_COLS * MONTH_ROWS
-    local shown = math.min(max_tiles, month.books)
-    local more_h = month.books > shown and px(24) or 0
-    local rows = math.ceil(shown / MONTH_COLS)
-    local avail = floor((self.content_h - heightOf(group) - more_h) / MONTH_ROWS) - gap
-    local cover_w, cover_h = self:coverSize(MONTH_COLS, gap, avail)
-    for r = 1, rows do
-        local from = (r - 1) * MONTH_COLS + 1
-        if r > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
-        table.insert(group, self:tileRow(month.list, from, math.min(shown, from + MONTH_COLS - 1), cover_w, cover_h, gap))
-    end
+    local shown = math.min(BOOK_COLS * BOOK_ROWS, month.books)
+    local more_h = month.books > shown and px(28) or 0
+    table.insert(group, self:galleryGrid(month.list, self.content_h - heightOf(group) - more_h))
     if month.books > shown then
+        table.insert(group, vspan(6))
         table.insert(group, text(string.format(_("+%d more %s"), month.books - shown, Theme.open_heart),
             Theme.face("script", 16), { color = Theme.soft_ink }))
     end

@@ -402,7 +402,7 @@ test("month page: covers grid, navigation, no future months", function()
     assert(texts(view):find("No blooms this month"))
 end)
 
-test("month with many books shows 9 tiles and +N more", function()
+test("month is a My-books-style gallery: 6 framed tiles and +N more", function()
     resetDB()
     db.period = function()
         local list = {}
@@ -412,9 +412,11 @@ test("month with many books shows 9 tiles and +N more", function()
     local view = openView()
     view:goToPage(4)
     local tiles = 0
-    walk(view, function(n) if n.radius == 8 and n.padding == 4 then tiles = tiles + 1 end end)
-    eq(tiles, 9)
-    assert(texts(view):find("+3 more"))
+    walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
+    eq(tiles, 6)
+    assert(texts(view):find("+6 more"))
+    -- most-read first, with title and "% · time" like My books
+    assert(texts(view):find("Book 12\n10%% · 20m"), texts(view))
 end)
 
 test("paging wraps both ways and swipes/keys navigate or close", function()
@@ -922,6 +924,17 @@ test("year cards use gentler corners", function()
     local radii = {}
     walk(view, function(n) if n.kind == "Framecontainer" and n.bordersize == 0 and n.radius then radii[#radii + 1] = n.radius end end)
     eq(radii, { 10, 10 })
+end)
+
+test("garden is a smaller grid centred vertically", function()
+    resetDB()
+    local view = openView()
+    local content = view[1][1][1][3] -- frame > overlap > column > content (after header, span)
+    eq(content.kind, "Centercontainer")
+    eq(content.dimen.h, view.content_h)
+    local cards = {}
+    walk(content, function(n) if n.kind == "Framecontainer" and n.radius == 12 then cards[#cards + 1] = n end end)
+    eq(#cards, 6)
 end)
 
 H.done()
