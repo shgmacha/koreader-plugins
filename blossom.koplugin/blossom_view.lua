@@ -655,9 +655,12 @@ function BlossomView:build_week()
         table.insert(group, text(_("No books yet this week ❀"), Theme.face("script", 16), { color = Theme.soft_ink }))
         return group
     end
-    local list, pager = self:pageOf("week", week.list, WEEK_TILES)
+    -- The first four covers; "See more …" opens the whole week as a gallery.
+    local list = {}
+    for i = 1, math.min(WEEK_TILES, #week.list) do list[i] = week.list[i] end
     local shown = #list
-    local avail = self.content_h - heightOf(group) - px(24) - (pager and px(44) or 0)
+    local more = week.books > WEEK_TILES
+    local avail = self.content_h - heightOf(group) - px(24) - (more and px(40) or 0)
     local cover_w, cover_h = self:coverSize(WEEK_TILES, gap, avail)
     if cover_h < px(50) then
         -- Too little room for covers: a sweet list instead.
@@ -685,9 +688,12 @@ function BlossomView:build_week()
         end
         table.insert(group, row)
     end
-    if pager then
-        table.insert(group, vspan(6))
-        table.insert(group, pager)
+    if more then
+        table.insert(group, vspan(12))
+        table.insert(group, Tappable:new{
+            callback = function() self:openMore("week") end,
+            text(_("See more …"), Theme.face("script", 17), { color = Theme.soft_ink }),
+        })
     end
     return group
 end

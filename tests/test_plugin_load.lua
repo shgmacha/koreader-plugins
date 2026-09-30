@@ -165,13 +165,15 @@ for _, name in ipairs({
     "ui/widget/overlapgroup", "ui/widget/progresswidget", "ui/widget/textboxwidget",
     "ui/widget/textwidget", "ui/widget/verticalgroup", "ui/widget/verticalspan", "ui/widget/widget",
     "ui/widget/container/widgetcontainer", "ui/widget/container/leftcontainer", "ui/widget/rectspan",
-    "ui/widget/linewidget", "ui/widget/spinwidget",
+    "ui/widget/linewidget", "ui/widget/container/scrollablecontainer", "ui/widget/spinwidget",
 }) do
     stubs[name] = class(name:match("([^/]+)$"):gsub("^%l", string.upper)
         :gsub("group$", "Group"):gsub("widget$", "Widget"):gsub("span$", "Span"))
 end
 stubs["ui/widget/infomessage"].kind = "InfoMessage"
 stubs["ui/widget/spinwidget"].kind = "SpinWidget"
+stubs["ui/widget/container/scrollablecontainer"].kind = "ScrollableContainer"
+stubs["ui/widget/container/scrollablecontainer"].getScrollbarWidth = function() return 6 end
 
 _G.G_reader_settings = {
     data = {},
@@ -887,7 +889,7 @@ test("tapping a day shows its books, highlights and bookmarks", function()
     assert(t:find("1\nhighlight\n1\nbookmark"), t)
     assert(t:find("books I read"), t)
     assert(t:find("50m"), t) -- Anathema's time that day, under its cover
-    assert(t:find("“She was the storm.”", 1, true), t)
+    assert(t:find("\nShe was the storm.\n", 1, true), t)
     assert(t:find("Anathema · p. 88 · 21:00", 1, true), t)
     assert(t:find("✎ chills ♡", 1, true), t)
     assert(t:find("☆  p. 80 · Nine · Anathema · 20:00", 1, true), t)
@@ -919,14 +921,14 @@ test("day page: empty notes and many highlights", function()
     view = openView()
     page = openToday(view)
     t = texts(page)
-    assert(t:find("quote 1”", 1, true), t)
+    assert(t:find("\nquote 1\n", 1, true), t)
     assert(not t:find("quote 30"), t)
     local state = pagerState(page)
     local total = tonumber(state:match("/(%d+)"))
     eq(state, "1/" .. total)
     for _ = 2, total do page:onSwipe(nil, { direction = "west" }) end
-    assert(texts(page):find("quote 30”", 1, true), "the last page reaches the last highlight")
-    assert(texts(page):find("^Blossom\n.-\nhighlights\n“"), "each page keeps its section title")
+    assert(texts(page):find("\nquote 30\n", 1, true), "the last page reaches the last highlight")
+    assert(texts(page):find("^Blossom\n.-\nhighlights\nquote"), "each page keeps its section title")
 end)
 
 test("day page: many books page four at a time", function()
@@ -954,7 +956,7 @@ test("day page survives unreadable sidecars and old bookmark format", function()
         { datetime = today .. " 09:00:00", highlighted = true, notes = "legacy quote", page = 5 },
     } } }
     page = openToday(openView())
-    assert(texts(page):find("“legacy quote”", 1, true))
+    assert(texts(page):find("\nlegacy quote\n", 1, true))
 end)
 
 test("days without reading are not tappable", function()
@@ -1181,14 +1183,14 @@ test("book details show snippet, highlights and bookmark count from the sidecar"
     local t = texts(shown[#shown])
     assert(t:find("Anathema\nKeri Lake\nA witchy romance in the woods.\nfinished · 300 of 300 pages"), t)
     assert(t:find("♥ 2\nhighlights\n☆ 1\nbookmark"), t)
-    assert(t:find("“She was the storm.”", 1, true), t)
+    assert(t:find("\nShe was the storm.\n", 1, true), t)
     assert(t:find("p. 88 · Nine · 3 Aug 2026", 1, true), t)
     assert(t:find("✎ chills", 1, true), t)
-    assert(t:find("“Second quote.”", 1, true), t)
+    assert(t:find("\nSecond quote.\n", 1, true), t)
     eq(bows(shown[#shown]), 1) -- finished
 end)
 
-test("book details: many highlights are paged with dots", function()
+test("book details: many highlights scroll inside the page", function()
     resetDB()
     db.book = function()
         return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
@@ -1199,21 +1201,22 @@ test("book details: many highlights are paged with dots", function()
     local view = openView()
     view:openBook(1)
     local detail = shown[#shown]
+    local scroller = detail.cropping_widget
+    assert(scroller and scroller.kind == "ScrollableContainer", "the page scrolls")
     local t = texts(detail)
-    assert(t:find("quote 1”", 1, true), t)
-    assert(not t:find("quote 25"), t)
-    local state = pagerState(detail)
-    local total = tonumber(state:match("/(%d+)"))
-    eq(state, "1/" .. total)
-    assert(total >= 2)
-    detail:onSwipe(nil, { direction = "west" })
-    eq(pagerState(detail), "2/" .. total)
-    assert(not texts(detail):find("quote 1”", 1, true))
-    for _ = 1, total do detail:turnHighlights(1) end
-    eq(pagerState(detail), total .. "/" .. total)
-    assert(texts(detail):find("quote 25”", 1, true), "the last page reaches the last highlight")
-    detail:onSwipe(nil, { direction = "east" })
-    eq(pagerState(detail), (total - 1) .. "/" .. total)
+    assert(t:find("\nquote 1\n", 1, true) and t:find("\nquote 25\n", 1, true), "every highlight is in the list")
+    eq(pagerState(detail), nil) -- no pager
+    -- the scroll area is everything below the header, inside the page (window or full screen)
+    eq(scroller.dimen.w, detail.inner_w + 6 + 8) -- plus the scrollbar, in the right margin
+    assert(scroller.dimen.h > 0 and scroller.dimen.h < detail.height)
+    assert(texts(scroller):find("my reading") and texts(scroller):find("my highlights"), "title, stats and highlights all scroll")
+    -- in a floating window too
+    G_reader_settings.data.blossom = { open_as = "window" }
+    view = openView()
+    view:openBook(1)
+    detail = shown[#shown]
+    assert(detail.geom.window and detail.cropping_widget, "window: still scrolls")
+    assert(detail.cropping_widget.dimen.h < detail.height)
 end)
 
 test("calendar day cells keep their full size", function()
@@ -1232,22 +1235,19 @@ test("calendar day cells keep their full size", function()
     for _, ok in ipairs(sizes) do assert(ok, "a day cell shrank to its content") end
 end)
 
-test("book details always show at least one highlight", function()
+test("book details: a few highlights don't need scrolling", function()
     resetDB()
-    Screen.h = 440
     db.book = function()
         return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
     end
-    db.sidecar = { ["/books/a.epub"] = { doc_props = { description = string.rep("words ", 60) }, annotations = {
-        { datetime = "2026-08-01 10:00:00", drawer = "lighten", text = string.rep("long ", 80), note = "note" },
-        { datetime = "2026-08-02 10:00:00", drawer = "lighten", text = "second" },
+    db.sidecar = { ["/books/a.epub"] = { annotations = {
+        { datetime = "2026-08-01 10:00:00", drawer = "lighten", text = "only one", note = "note" },
     } } }
     local view = openView()
     view:openBook(1)
-    local t = texts(shown[#shown])
-    assert(t:find("“long", 1, true), t)
-    assert(not t:find("✎ note", 1, true), "the shortened first highlight drops its note")
-    eq(pagerState(shown[#shown]), "1/2")
+    local detail = shown[#shown]
+    eq(detail.cropping_widget, nil)
+    assert(texts(detail):find("✎ note", 1, true))
 end)
 
 test("every page uses the same side margins", function()
@@ -1350,7 +1350,7 @@ test("highlights and bookmarks pages are lists with the book they're from, paged
     local t = texts(hl)
     assert(t:find("My highlights"), t)
     eq(pagerState(hl), "1/1") -- the pager is always there, a lone sprout on a single page
-    assert(t:find("“A quote.”", 1, true), t)
+    assert(t:find("\nA quote.\n", 1, true), t)
     assert(t:find("Anathema · p. 5 · 15 Sep 2026", 1, true), t)
     assert(t:find("✎ aww", 1, true), t)
 
@@ -1445,14 +1445,14 @@ test("bookmarks page lists bookmarks and highlights together, newest first", fun
     view:openMore("bookmarks")
     local t = texts(shown[#shown])
     assert(t:find("2 bookmarks · 1 highlight, newest first", 1, true), t)
-    local q = t:find("“Newest quote.”", 1, true)
+    local q = t:find("\nNewest quote.\n", 1, true)
     local b2 = t:find("p. 7 · Two", 1, true)
     local b1 = t:find("p. 4 · One", 1, true)
     assert(q and b2 and b1 and q < b2 and b2 < b1, t)
     assert(t:find("Anathema · p. 9 · 3 Sep 2026", 1, true), t)
 end)
 
-test("week covers page 4 at a time", function()
+test("week shows 4 covers and a See more link to the whole week", function()
     resetDB()
     db.period = function()
         local list = {}
@@ -1461,28 +1461,30 @@ test("week covers page 4 at a time", function()
     end
     local view = openView()
     view:goToPage(2)
-    local t = texts(view)
-    eq(pagerState(view), "1/2")
-    assert(not t:find("more"), "no +N more any more")
-    view.sub_page.week = 2
-    view:refresh()
-    eq(pagerState(view), "2/2")
+    eq(pagerState(view:build_week()), nil) -- no pager under the covers
+    local link = findTappable(view, function(x) return x == "See more …" end)
+    assert(link, "See more link")
+    link:onTap()
+    local more = shown[#shown]
+    eq(getmetatable(more) == require("blossom_more"), true)
+    assert(texts(more):find("This week"))
+    eq(#more.items, 6)
 end)
 
-test("highlight text keeps its own quotes out of ours", function()
+test("highlights show exactly as in the book: no added quote marks", function()
     resetDB()
     db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = {
-        { datetime = "2026-09-03 10:00:00", drawer = "lighten", text = '"Already quoted."', pageno = 9 },
-        { datetime = "2026-09-04 10:00:00", drawer = "lighten", text = "“Curly too”", pageno = 10 },
+        { datetime = "2026-09-03 10:00:00", drawer = "lighten", text = '"Already quoted," she said.', pageno = 9 },
+        { datetime = "2026-09-04 10:00:00", drawer = "lighten", text = "  No quotes in the book.  ", pageno = 10 },
     } } }
     local view = openView()
     view:openMore("highlights")
     local t = texts(shown[#shown])
-    assert(t:find('“Already quoted.”', 1, true), t)
-    assert(t:find('“Curly too”', 1, true), t)
-    assert(not t:find('“"', 1, true) and not t:find("““", 1, true), "no doubled marks")
+    assert(t:find('\n"Already quoted," she said.\n', 1, true), t) -- the book's own marks, untouched
+    assert(t:find("\nNo quotes in the book.\n", 1, true), t)       -- nothing added, only trimmed
+    assert(not t:find("“", 1, true) and not t:find("”", 1, true), "Blossom adds no quote marks")
     local q
-    walk(shown[#shown], function(n) if n.text == "“Curly too”" then q = n end end)
+    walk(shown[#shown], function(n) if n.text == "No quotes in the book." then q = n end end)
     eq(q.face.size, 15) -- smaller type on the highlights page
 end)
 

@@ -344,15 +344,4 @@ test("streakRange ends today when read today, else yesterday", function()
     eq(Data.streakRange({}, "2026-09-30", 0), nil)
 end)
 
-test("cleanQuote strips the highlight's own quote marks", function()
-    eq(Data.cleanQuote('"Hello there."'), "Hello there.")
-    eq(Data.cleanQuote("  “Curly,” she said  "), "Curly,” she said") -- only the outer marks go
-    eq(Data.cleanQuote("‘single’"), "single")
-    eq(Data.cleanQuote("«guillemets»"), "guillemets")
-    eq(Data.cleanQuote('"“double wrapped”"'), "double wrapped")
-    eq(Data.cleanQuote("It's fine"), "It's fine") -- inner apostrophes stay
-    eq(Data.cleanQuote(nil), "")
-    eq(Data.cleanQuote('""'), "")
-end)
-
 H.done()

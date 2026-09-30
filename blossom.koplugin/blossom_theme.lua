@@ -174,7 +174,7 @@ function Theme.wave(ratio, width)
     }
 end
 
---- A quote with a soft bar on its left: “text”, a small gray `meta` line, then the reader's note.
+--- A highlight with a soft bar on its left: the text as in the book, a small gray `meta` line, then the note.
 --- Short quotes take their natural height; long ones stop at `max_lines` with an ellipsis.
 function Theme.quote(quote_text, meta, note, width, max_lines, size)
     local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -184,8 +184,8 @@ function Theme.quote(quote_text, meta, note, width, max_lines, size)
     local face = Theme.face("script", size)
     local function box(height)
         return TextBoxWidget:new{
-            -- the highlight's own quote marks are dropped so they don't double up with ours
-            text = "“" .. require("blossom_data").cleanQuote(quote_text) .. "”",
+            -- exactly as in the book: no added quote marks, so the book's own are unmistakable
+            text = ((quote_text or ""):gsub("^%s+", ""):gsub("%s+$", "")),
             face = face,
             width = inner,
             height = height,

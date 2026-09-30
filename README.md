@@ -48,7 +48,7 @@ marks the current page.
 
 - Minutes read on each of the last 7 days, with a ♥ over your best day.
 - Your total for the week and your best day.
-- **Books that kept me company:** just the covers of what you read this week.
+- **Books that kept me company:** the covers of what you read this week, with **See more …** for the rest.
 
 <br clear="right">
 
@@ -99,7 +99,8 @@ Tap any book, anywhere, to open it:
 - **Top:** the cover, title, author, a short snippet of the book's description, a wavy progress
   line and "66% read · 250 of 380 pages".
 - **My reading:** time together, reading days, pages per hour, time left, highlights and bookmarks.
-- **My highlights:** your highlights from this book.
+- **My highlights:** your highlights from this book, shown exactly as in the book.
+- The page scrolls when it's taller than the screen or window. Swipe up or down on it.
 
 <br clear="right">
 

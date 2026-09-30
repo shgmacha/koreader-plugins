@@ -11,8 +11,8 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local BottomContainer = require("ui/widget/container/bottomcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
+local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
@@ -146,44 +146,38 @@ function BlossomDetail:build()
         Theme.rule(_("my highlights"), self.inner_w),
         vspan(16),
     }
-    local function room()
-        local h = content:getSize().h
-        content:resetLayout()
-        return self.height - header:getSize().h - h - px(48)
-    end
     local list = b.highlight_list or {}
-    local pager
     if #list == 0 then
         table.insert(content, text(_("No highlights yet — the best is still ahead ♡"), Theme.face("script", 15),
             { color = Theme.soft_ink, max_width = self.inner_w }))
     else
-        -- Highlights fill the rest of the page; the pager at the bottom moves through them.
-        self.hl_page = self.hl_page or 1
-        local avail = room() - px(50)
-        local function quote(h, first_on_page)
+        -- Every highlight, one after another; the whole page scrolls when it's taller than the window.
+        for i, h in ipairs(list) do
             local meta = {}
             if h.page then meta[#meta + 1] = string.format(_("p. %d"), h.page) end
             if h.chapter then meta[#meta + 1] = h.chapter end
             meta[#meta + 1] = h.date
-            local q = Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 3)
-            if first_on_page and q:getSize().h > avail then
-                -- Always show at least one: a shorter version when space is tight.
-                q:free()
-                q = Theme.quote(h.text, table.concat(meta, " · "), nil, self.inner_w, 2)
-            end
-            return q
+            if i > 1 then table.insert(content, vspan(18)) end
+            table.insert(content, Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 6))
         end
-        local make_row = function(h, _idx, prev) return quote(h, prev == nil) end
-        if not self.hl_total then
-            self.hl_starts = Theme.pageStarts(list, avail, make_row, px(18))
-            self.hl_total = #self.hl_starts
-        end
-        local group = Theme.fillPage(list, self.hl_starts[self.hl_page], avail, make_row, px(18))
-        table.insert(content, group)
-        if self.hl_total > 1 then
-            pager = Theme.pager(self.hl_page, self.hl_total,
-                function() self:turnHighlights(-1) end, function() self:turnHighlights(1) end)
-        end
+    end
+    table.insert(content, vspan(16))
+
+    -- Below the header, scroll everything when it doesn't fit (the scrollbar sits in the right margin).
+    local avail = self.height - header:getSize().h - px(Theme.TOP_GAP) - px(12)
+    self.cropping_widget = nil
+    if content:getSize().h > avail then
+        content:resetLayout()
+        local scroll_w = ScrollableContainer:getScrollbarWidth()
+        self.cropping_widget = ScrollableContainer:new{
+            dimen = Geom:new{ w = self.inner_w + scroll_w + px(8), h = avail },
+            show_parent = self,
+            content,
+        }
+        -- balance the scrollbar's width on the left so the page stays on its margins
+        content = HorizontalGroup:new{ HorizontalSpan:new{ width = scroll_w + px(8) }, self.cropping_widget }
+    else
+        content:resetLayout()
     end
 
     if self[1] then self[1]:free() end
@@ -196,29 +190,13 @@ function BlossomDetail:build()
                 vspan(Theme.TOP_GAP),
                 content,
             },
-            pager and BottomContainer:new{
-                dimen = Geom:new{ w = self.width, h = self.height },
-                VerticalGroup:new{ align = "center", pager, vspan(6) },
-            } or nil,
         }
     )
 end
 
-function BlossomDetail:turnHighlights(delta)
-    local page = (self.hl_page or 1) + delta
-    if page < 1 or page > (self.hl_total or 1) then return end
-    self.hl_page = page
-    self:build()
-    UIManager:setDirty(self, "flashui")
-end
-
 function BlossomDetail:onSwipe(_, ges)
-    if ges.direction == "west" then self:turnHighlights(1); return true end
-    if ges.direction == "east" then
-        if (self.hl_page or 1) > 1 then self:turnHighlights(-1); return true end
-        return self:onClose()
-    end
-    if ges.direction == "south" then return self:onClose() end
+    -- (swipes on the highlights scroll them; elsewhere, down or right goes back)
+    if ges.direction == "south" or ges.direction == "east" then return self:onClose() end
     return true
 end
 
