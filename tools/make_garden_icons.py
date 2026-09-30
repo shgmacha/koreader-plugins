@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Draws Blossom's grayscale garden icons (SVG) into blossom.koplugin/icons/."""
+import math, os
+
+OUT = os.path.join(os.path.dirname(__file__), "..", "blossom.koplugin", "icons")
+INK, SOFT, PETAL, LIGHT, LEAF, MID = "#333333", "#6a6a6a", "#d2d2d2", "#ececec", "#bcbcbc", "#9a9a9a"
+S = f'stroke="{INK}" stroke-linejoin="round" stroke-linecap="round"'
+
+def stem(x=24, top=26, bottom=46, leaf=True, side=1):
+    out = f'<path d="M{x} {bottom} C{x} {bottom-8} {x} {top+8} {x} {top}" fill="none" {S} stroke-width="2.4"/>'
+    if leaf:
+        lx = x - 12 * side
+        out += (f'<path d="M{x} {bottom-8} C{x-4*side} {bottom-8} {lx} {bottom-12} {lx} {bottom-18} '
+                f'C{x-6*side} {bottom-18} {x} {bottom-14} {x} {bottom-8} Z" fill="{LEAF}" {S} stroke-width="1.8"/>')
+    return out
+
+def tulip(x=24, y=0):
+    return (stem(x, 24 + y, 46 + y) +
+            f'<path d="M{x-10} {8+y} C{x-11} {19+y} {x-6} {25+y} {x} {25+y} C{x+6} {25+y} {x+11} {19+y} {x+10} {8+y} '
+            f'L{x+5} {14+y} L{x} {5+y} L{x-5} {14+y} Z" fill="{PETAL}" {S} stroke-width="2.3"/>')
+
+def daisy(x=24, y=16, r=6.5, center=MID, n=8, stem_to=46):
+    out = stem(x, y + 4, stem_to, side=-1) if stem_to else ""
+    for k in range(n):
+        a = 360 * k / n
+        out += (f'<ellipse cx="{x}" cy="{y - r}" rx="{r*0.5:.1f}" ry="{r:.1f}" transform="rotate({a:.0f} {x} {y})" '
+                f'fill="white" {S} stroke-width="1.8"/>')
+    out += f'<circle cx="{x}" cy="{y}" r="{r*0.62:.1f}" fill="{center}" {S} stroke-width="1.8"/>'
+    return out
+
+def sunflower(x=24, y=16):
+    return daisy(x, y, r=7, center=SOFT, n=12)
+
+def sprout(x=24, bottom=46):
+    return (f'<path d="M{x} {bottom} C{x} {bottom-8} {x} {bottom-14} {x} {bottom-20}" fill="none" {S} stroke-width="2.4"/>'
+            f'<path d="M{x} {bottom-16} C{x-8} {bottom-16} {x-14} {bottom-22} {x-14} {bottom-30} C{x-6} {bottom-30} {x} {bottom-24} {x} {bottom-16} Z" fill="{LEAF}" {S} stroke-width="1.8"/>'
+            f'<path d="M{x} {bottom-20} C{x+7} {bottom-20} {x+14} {bottom-26} {x+14} {bottom-34} C{x+6} {bottom-34} {x} {bottom-28} {x} {bottom-20} Z" fill="{PETAL}" {S} stroke-width="1.8"/>')
+
+def rose(x=24, y=15):
+    return (stem(x, y + 9, 46) +
+            f'<circle cx="{x}" cy="{y}" r="10" fill="{PETAL}" {S} stroke-width="2.3"/>'
+            f'<path d="M{x-5} {y+1} C{x-5} {y-5} {x+4} {y-6} {x+5} {y-1} C{x+6} {y+4} {x} {y+6} {x-2} {y+2} C{x-3} {y-1} {x+1} {y-3} {x+2} {y}" fill="none" {S} stroke-width="1.8"/>')
+
+def bud(x=24):
+    return (stem(x, 22, 46, side=-1) +
+            f'<path d="M{x} {6} C{x+7} {12} {x+7} {20} {x} {23} C{x-7} {20} {x-7} {12} {x} {6} Z" fill="{PETAL}" {S} stroke-width="2.2"/>'
+            f'<path d="M{x-6} {18} C{x-3} {21} {x+3} {21} {x+6} {18}" fill="none" {S} stroke-width="1.6"/>')
+
+def butterfly(x=24, y=24):
+    return (f'<path d="M{x} {y-2} C{x-6} {y-16} {x-20} {y-16} {x-18} {y-4} C{x-17} {y+2} {x-6} {y+2} {x} {y-2} Z" fill="{PETAL}" {S} stroke-width="2"/>'
+            f'<path d="M{x} {y-2} C{x+6} {y-16} {x+20} {y-16} {x+18} {y-4} C{x+17} {y+2} {x+6} {y+2} {x} {y-2} Z" fill="{PETAL}" {S} stroke-width="2"/>'
+            f'<path d="M{x} {y} C{x-4} {y+2} {x-14} {y+6} {x-11} {y+13} C{x-7} {y+16} {x-2} {y+8} {x} {y} Z" fill="{LIGHT}" {S} stroke-width="2"/>'
+            f'<path d="M{x} {y} C{x+4} {y+2} {x+14} {y+6} {x+11} {y+13} C{x+7} {y+16} {x+2} {y+8} {x} {y} Z" fill="{LIGHT}" {S} stroke-width="2"/>'
+            f'<ellipse cx="{x}" cy="{y+2}" rx="1.8" ry="9" fill="{INK}"/>'
+            f'<path d="M{x-1} {y-6} C{x-3} {y-12} {x-6} {y-14} {x-7} {y-15} M{x+1} {y-6} C{x+3} {y-12} {x+6} {y-14} {x+7} {y-15}" fill="none" {S} stroke-width="1.4"/>')
+
+def ladybug(x=24, y=26):
+    return (f'<circle cx="{x}" cy="{y-11}" r="5" fill="{INK}"/>'
+            f'<ellipse cx="{x}" cy="{y+2}" rx="13" ry="14" fill="{PETAL}" {S} stroke-width="2.3"/>'
+            f'<path d="M{x} {y-12} L{x} {y+16}" {S} stroke-width="1.8"/>'
+            + "".join(f'<circle cx="{x+dx}" cy="{y+dy}" r="2.6" fill="{INK}"/>' for dx, dy in [(-6,-3),(6,-3),(-7,6),(7,6),(-3,11),(3,11)]))
+
+def svg(body, w=48, h=48):
+    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">{body}</svg>\n'
+
+ICONS = {
+    "tulip": tulip(), "daisy": daisy(), "sprout": sprout(), "rose": rose(), "bud": bud(),
+    "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(),
+}
+
+def bed(w=600, h=90):
+    """A little garden bed: soft ground, grass tufts and flowers of different heights."""
+    ground = h - 12
+    out = f'<path d="M0 {ground} C{w*0.2} {ground-6} {w*0.35} {ground+4} {w*0.5} {ground-2} C{w*0.65} {ground-8} {w*0.8} {ground+3} {w} {ground-3} L{w} {h} L0 {h} Z" fill="{LIGHT}" stroke="{MID}" stroke-width="1.5"/>'
+    # grass tufts
+    for i in range(0, w, 23):
+        gx = i + 6
+        out += f'<path d="M{gx-4} {ground+2} L{gx-6} {ground-8} M{gx} {ground+2} L{gx} {ground-11} M{gx+4} {ground+2} L{gx+7} {ground-7}" stroke="{MID}" stroke-width="1.6" stroke-linecap="round" fill="none"/>'
+    plants = [(40, "tulip", 0.95), (95, "daisy", 0.8), (150, "sprout", 0.7), (205, "rose", 1.0), (262, "bud", 0.75),
+              (318, "sunflower", 1.05), (375, "daisy", 0.85), (430, "tulip", 0.8), (485, "sprout", 0.75), (545, "rose", 0.9)]
+    for x, kind, s in plants:
+        top = ground + 2 - 48 * s
+        out += f'<g transform="translate({x - 24*s:.1f} {top:.1f}) scale({s})">{ICONS[kind]}</g>'
+    out += f'<g transform="translate(250 2) scale(0.55)">{butterfly()}</g>'
+    return svg(out, w, h)
+
+if __name__ == "__main__":
+    os.makedirs(OUT, exist_ok=True)
+    for name, body in ICONS.items():
+        with open(os.path.join(OUT, f"{name}.svg"), "w") as f:
+            f.write(svg(body))
+    with open(os.path.join(OUT, "garden_bed.svg"), "w") as f:
+        f.write(bed())
+    print("wrote", len(ICONS) + 1, "icons to", os.path.abspath(OUT))

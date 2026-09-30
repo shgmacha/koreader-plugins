@@ -50,7 +50,7 @@ Theme.shades = {
 
 -- Page margins shared by every page: sides, and the space under the header.
 Theme.MARGIN = 34
-Theme.TOP_GAP = 22
+Theme.TOP_GAP = 36
 
 function Theme.px(n)
     return Screen:scaleBySize(n)
@@ -227,13 +227,18 @@ function Theme.statGrid(items, width, cols, opts)
             row = HorizontalGroup:new{ align = "top" }
             table.insert(grid, row)
         end
+        -- item = { glyph, value, label[, icon widget] }: a drawn icon sits above the value instead of the glyph.
+        local body = VerticalGroup:new{ align = "center" }
+        if item[4] then
+            table.insert(body, item[4])
+            table.insert(body, Theme.vspan(4))
+        end
+        table.insert(body, Theme.text(item[4] and item[2] or (item[1] .. " " .. item[2]),
+            Theme.face("bold", opts.value_size or 16), { max_width = col_w }))
+        table.insert(body, Theme.text(item[3], Theme.face("script", opts.label_size or 13), { color = Theme.soft_ink, max_width = col_w }))
         local cell = CenterContainer:new{
             dimen = Geom:new{ w = col_w, h = Theme.px(opts.cell_h or 46) },
-            VerticalGroup:new{
-                align = "center",
-                Theme.text(item[1] .. " " .. item[2], Theme.face("bold", opts.value_size or 16), { max_width = col_w }),
-                Theme.text(item[3], Theme.face("script", opts.label_size or 13), { color = Theme.soft_ink, max_width = col_w }),
-            },
+            body,
         }
         table.insert(row, opts.wrap and opts.wrap(cell, i) or cell)
     end
@@ -270,6 +275,18 @@ function Theme.bow(size)
     }
 end
 
+--- One of the drawn garden icons in icons/ (tulip, daisy, rose, sprout, ...). `w`, `h` unscaled;
+--- pass `exact` when they are already in screen pixels.
+function Theme.icon(name, w, h, exact)
+    local scale = exact and function(n) return n end or Theme.px
+    return ImageWidget:new{
+        file = Theme.dir .. "/icons/" .. name .. ".svg",
+        width = scale(w),
+        height = scale(h or w),
+        alpha = true,
+    }
+end
+
 --- A little drawn heart (filled soft gray, dark outline). `size` is its width.
 function Theme.heartIcon(size)
     size = Theme.px(size or 24)
@@ -301,14 +318,14 @@ function Theme.withBow(widget, size, side)
     return HorizontalGroup:new{ align = "center", widget, gap, bow }
 end
 
---- "· ♡ ·  bow  · ♡ ·" decoration line.
-function Theme.ribbon(size)
-    local function side() return Theme.text("· ♡ ·", Theme.face("ui", 12), { color = Theme.accent }) end
-    return HorizontalGroup:new{
-        align = "center",
-        side(), HorizontalSpan:new{ width = Theme.px(8) }, Theme.bow(size or 22),
-        HorizontalSpan:new{ width = Theme.px(8) }, side(),
-    }
+--- A little row of flowers of different heights, standing on the same ground.
+function Theme.ribbon()
+    local row = HorizontalGroup:new{ align = "bottom" }
+    for i, f in ipairs({ { "sprout", 16 }, { "bud", 19 }, { "daisy", 23 }, { "tulip", 26 }, { "daisy", 23 }, { "bud", 19 }, { "sprout", 16 } }) do
+        if i > 1 then table.insert(row, HorizontalSpan:new{ width = Theme.px(2) }) end
+        table.insert(row, Theme.icon(f[1], f[2]))
+    end
+    return row
 end
 
 --- Borderless soft strip of little stats: value over label, evenly spaced.
@@ -350,7 +367,15 @@ function Theme.header(title, width, on_close, show_parent, opts)
     local titles = VerticalGroup:new{
         align = "center",
         Theme.vspan(8),
-        Theme.text("˚ ❀ Blossom ❀ ˚", Theme.face("ui", 12), { color = Theme.soft_ink }),
+        -- "Blossom" between two little drawn flowers
+        HorizontalGroup:new{
+            align = "center",
+            Theme.icon("daisy", 16),
+            HorizontalSpan:new{ width = Theme.px(5) },
+            Theme.text("Blossom", Theme.face("ui", 12), { color = Theme.soft_ink }),
+            HorizontalSpan:new{ width = Theme.px(5) },
+            Theme.icon("daisy", 16),
+        },
         Theme.text(title, Theme.face("script_bold", opts.title_size or 23), { max_width = width - Theme.px(120) }),
     }
     if opts.subtitle then

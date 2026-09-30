@@ -491,7 +491,7 @@ function BlossomView:openMore(key)
         page = books(list, _("Books loved"), count(list) .. " " .. Theme.flower)
     elseif key == "time" then
         local list = self:period("all:time", function() return { list = self.loadBooks("time") } end).list
-        page = books(list, _("Of stories"), string.format(_("%s of reading, most loved first ♡"), Data.fmtDuration(s.seconds)))
+        page = books(list, _("Hours of stories"), string.format(_("%s of reading, most loved first ♡"), Data.fmtDuration(s.seconds)))
     elseif key == "pages" then
         local list = self:period("all:pages", function() return { list = self.loadBooks("pages") } end).list
         page = books(list, _("Pages turned"), string.format(_("%d pages %s"), s.pages, Theme.blossom),
@@ -537,31 +537,42 @@ function BlossomView:build_overview()
     end
     -- No frames: a greeting, soft numbers on the page, a quiet line of love. Centred.
     local streak_label = s.streak == 1 and _("day streak") or _("days streak")
-    -- Every number is tappable and opens its own page.
+    -- A little garden: each number grows its own flower, and every one is tappable.
     local keys = { "books", "time", "pages", "streak", "today", "week", "highlights", "bookmarks" }
+    local function flower(name) return Theme.icon(name, 34) end
     local stats = Theme.statGrid({
-        { Theme.flower, tostring(s.books), _("books loved") },
-        { Theme.open_heart, Data.fmtDuration(s.seconds), _("of stories") },
-        { Theme.blossom, tostring(s.pages), _("pages turned") },
-        { Theme.heart, tostring(s.streak), streak_label },
-        { Theme.star, Data.fmtDuration(s.today_seconds), _("read today") },
-        { "✧", Data.fmtDuration(s.week_seconds), _("this week") },
-        { "❝", tostring(s.highlights or 0), (s.highlights == 1) and _("highlight") or _("highlights") },
-        { "⚑", tostring(s.bookmarks or 0), (s.bookmarks == 1) and _("bookmark") or _("bookmarks") },
-    }, self.inner_w, 4, { value_size = 20, label_size = 14, cell_h = 66, row_gap = 34,
+        { Theme.flower, tostring(s.books), _("books loved"), flower("tulip") },
+        { Theme.open_heart, Data.fmtDuration(s.seconds), _("hours of stories"), flower("daisy") },
+        { Theme.blossom, tostring(s.pages), _("pages turned"), flower("sprout") },
+        { Theme.heart, tostring(s.streak), streak_label, flower("rose") },
+        { Theme.star, Data.fmtDuration(s.today_seconds), _("read today"), flower("bud") },
+        { "✧", Data.fmtDuration(s.week_seconds), _("this week"), flower("sunflower") },
+        { "❝", tostring(s.highlights or 0), (s.highlights == 1) and _("highlight") or _("highlights"), flower("butterfly") },
+        { "⚑", tostring(s.bookmarks or 0), (s.bookmarks == 1) and _("bookmark") or _("bookmarks"), flower("ladybug") },
+    }, self.inner_w, 4, { value_size = 19, label_size = 14, cell_h = 104, row_gap = 26,
         wrap = function(cell, i)
             return Tappable:new{ callback = function() self:openMore(keys[i]) end, cell }
         end })
+    local bed_w = self.inner_w
     local garden = VerticalGroup:new{
         align = "center",
-        text(Data.greeting(self.hour), Theme.face("script", 24)),
-        vspan(6),
+        HorizontalGroup:new{
+            align = "center",
+            Theme.icon("sprout", 30),
+            hspan(px(12)),
+            text(Data.greeting(self.hour), Theme.face("script", 24)),
+            hspan(px(12)),
+            Theme.icon("sprout", 30),
+        },
+        vspan(4),
         text(Data.affirmation(s.today), Theme.face("script", 16), { color = Theme.soft_ink }),
-        vspan(40),
-        stats,
         vspan(30),
+        stats,
+        vspan(18),
         text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
             Theme.face("script", 15), { color = Theme.soft_ink }),
+        vspan(20),
+        Theme.icon("garden_bed", bed_w, floor(bed_w * 90 / 600), true),
     }
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },

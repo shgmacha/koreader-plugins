@@ -816,7 +816,7 @@ test("tapping a day shows its books, highlights and bookmarks", function()
     local view = openView()
     local page = openToday(view)
     local t = texts(page)
-    assert(t:find("^˚ ❀ Blossom ❀ ˚\n" .. tonumber(os.date("%d")) .. "\n" .. Data.daySubtitle(today)), t)
+    assert(t:find("^Blossom\n" .. tonumber(os.date("%d")) .. "\n" .. Data.daySubtitle(today)), t)
     assert(t:find("1h 00m\nread\n"), t)
     assert(t:find("1\nhighlight\n1\nbookmark"), t)
     assert(t:find("books I read"), t)
@@ -892,16 +892,23 @@ test("in the reader, book settings are saved first so today's notes are on disk"
     eq(saved, 1)
 end)
 
-test("bows: in every header, on finished books and the year title", function()
+test("headers grow a row of flowers; bows only mark finished books", function()
     resetDB()
     local view = openView()
-    eq(bows(view), 1) -- header ribbon (the garden's affirmation has no bow now)
+    eq(bows(view), 0)
+    local header = view[1][1][1][1]
+    local flowers = {}
+    walk(header, function(n) if n.file then flowers[#flowers + 1] = n.file:match("icons/(.-)%.svg$") end end)
+    eq(flowers, { "daisy", "daisy", "sprout", "bud", "daisy", "tulip", "daisy", "bud", "sprout" }) -- title flowers, then the row
+    assert(texts(header):find("^Blossom\n"), texts(header))
+    assert(not texts(header):find("❀"), "drawn flowers, not symbols")
+    assert(not texts(header):find("♡"), "no hearts in the header")
     view:goToPage(3)
-    eq(bows(view), 2) -- header + finished Anathema
+    eq(bows(view), 1) -- finished Anathema
     view:goToPage(5)
-    eq(bows(view), 1) -- header (the goal uses a heart now)
+    eq(bows(view), 0)
     view:openBook(2)
-    eq(bows(shown[#shown]), 1) -- unfinished book: header only
+    eq(bows(shown[#shown]), 0) -- unfinished book
 end)
 
 test("pagination hearts are small", function()
@@ -1011,11 +1018,21 @@ test("garden is frameless and centred vertically", function()
     eq(frames, 0)
     local t = texts(content)
     assert(not t:find("my garden in numbers"), t)
-    assert(t:find("\n" .. Data.affirmation(today) .. "\n❀ 3\n", 1, true), t) -- affirmation right under the greeting
+    assert(t:find("\n" .. Data.affirmation(today) .. "\n3\nbooks loved\n", 1, true), t) -- affirmation right under the greeting
     local aff
     walk(content, function(n) if n.text == Data.affirmation(today) then aff = n end end)
     eq({ aff.fgcolor, aff.face.size, aff.face.name }, { 0x55, 16, "NotoSerif-Italic.ttf" }) -- small, slanted, gray
-    assert(t:find("❀ 3\nbooks loved\n♡ 2h 30m\nof stories\n❀ 420\npages turned\n♥ 2\ndays streak"), t)
+    assert(t:find("3\nbooks loved\n2h 30m\nhours of stories\n420\npages turned\n2\ndays streak"), t)
+    local icons = {}
+    walk(content, function(n) if n.file then icons[#icons + 1] = n.file:match("icons/(.-)%.svg$") end end)
+    for _, name in ipairs({ "tulip", "daisy", "sprout", "rose", "bud", "sunflower", "butterfly", "ladybug", "garden_bed" }) do
+        local found = false
+        for _, have in ipairs(icons) do if have == name then found = true end end
+        assert(found, "garden grows a " .. name)
+    end
+    local bed
+    walk(content, function(n) if n.file and n.file:find("garden_bed") then bed = n end end)
+    eq({ bed.width, bed.height }, { view.inner_w, math.floor(view.inner_w * 90 / 600) }) -- full width, drawn proportions
     assert(t:find("longest streak: 2 days ☆"), t)
 end)
 
@@ -1041,7 +1058,7 @@ test("book details show snippet, highlights and bookmark count from the sidecar"
     assert(t:find("p. 88 · Nine · 3 Aug 2026", 1, true), t)
     assert(t:find("✎ chills", 1, true), t)
     assert(t:find("“Second quote.”", 1, true), t)
-    eq(bows(shown[#shown]), 2) -- header + finished
+    eq(bows(shown[#shown]), 1) -- finished
 end)
 
 test("book details: many highlights are capped with +N more", function()
@@ -1131,7 +1148,7 @@ test("garden shows highlights and bookmarks counts; every number is tappable", f
     }
     local view = openView()
     local t = texts(view)
-    assert(t:find("❝ 2\nhighlights\n⚑ 1\nbookmark"), t)
+    assert(t:find("2\nhighlights\n1\nbookmark"), t)
     local n = 0
     walk(view, function(x) if getmetatable(x) == BlossomView.Tappable then n = n + 1 end end)
     eq(n, 8)
@@ -1160,9 +1177,9 @@ test("garden book pages are galleries: books, time, pages", function()
     more:onNextPage() -- no page 3
     eq(more.page, 2)
 
-    local time = gardenTap(view, "of stories")
+    local time = gardenTap(view, "hours of stories")
     eq(db.last_order, "total_read_time DESC")
-    assert(texts(time):find("Of stories"))
+    assert(texts(time):find("Hours of stories"))
     local pages = gardenTap(view, "pages turned")
     eq(db.last_order, "total_read_pages DESC")
     assert(texts(pages):find("Book 1\n10 pages"), texts(pages))
