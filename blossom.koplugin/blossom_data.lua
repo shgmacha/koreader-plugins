@@ -34,7 +34,7 @@ function Data.greeting(hour)
     if hour >= 5 and hour < 12 then return "Good morning, bookworm ♡" end
     if hour >= 12 and hour < 17 then return "Good afternoon, sweet reader ♡" end
     if hour >= 17 and hour < 22 then return "Good evening, darling ♡" end
-    return "Hello, night owl ☆"
+    return "Hello, night owl"
 end
 
 function Data.affirmation(today)

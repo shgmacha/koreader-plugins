@@ -146,21 +146,7 @@ function LineChart:paintTo(bb, x, y)
     end
 end
 
---- Makes any widget tappable.
-local Tappable = InputContainer:extend{
-    callback = nil,
-}
-
-function Tappable:init()
-    self.ges_events = {
-        Tap = { GestureRange:new{ ges = "tap", range = function() return self.dimen end } },
-    }
-end
-
-function Tappable:onTap()
-    if self.callback then self.callback() end
-    return true
-end
+local Tappable = Theme.Tappable
 
 local function hspan(n) return HorizontalSpan:new{ width = n } end
 
@@ -274,9 +260,15 @@ function BlossomView:build()
 end
 
 function BlossomView:buildFooter()
-    local dots = {}
+    -- Soft dots for the pages, a little sprout for the one you're on.
+    local dots = HorizontalGroup:new{ align = "center" }
     for i = 1, #PAGES do
-        dots[i] = i == self.page and Theme.heart or Theme.open_heart
+        if i > 1 then table.insert(dots, hspan(px(10))) end
+        if i == self.page then
+            table.insert(dots, Theme.icon("sprout", 20))
+        else
+            table.insert(dots, text("●", Theme.face("ui", 9), { color = Theme.shades[3] }))
+        end
     end
     local function arrow(glyph, fn)
         return Button:new{
@@ -293,9 +285,9 @@ function BlossomView:buildFooter()
         HorizontalGroup:new{
             align = "center",
             arrow("‹", function() self:onPrevPage() end),
-            hspan(px(8)),
-            text(table.concat(dots, " "), Theme.face("ui", 13), { color = Theme.accent }),
-            hspan(px(8)),
+            hspan(px(12)),
+            dots,
+            hspan(px(12)),
             arrow("›", function() self:onNextPage() end),
         },
         vspan(6),
@@ -571,12 +563,16 @@ function BlossomView:build_overview()
         vspan(18),
         text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
             Theme.face("script", 15), { color = Theme.soft_ink }),
-        vspan(20),
-        Theme.icon("garden_bed", bed_w, floor(bed_w * 90 / 600), true),
     }
-    return CenterContainer:new{
-        dimen = Geom:new{ w = self.width, h = self.content_h },
-        garden,
+    -- The garden centred in the page, the flower bed along the very bottom.
+    local bed = Theme.icon("garden_bed", bed_w, floor(bed_w * 90 / 600), true)
+    return VerticalGroup:new{
+        align = "center",
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = self.content_h - bed.height },
+            garden,
+        },
+        bed,
     }
 end
 

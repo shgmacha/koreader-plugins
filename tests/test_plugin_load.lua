@@ -550,7 +550,7 @@ test("My books rows show small covers or flower placeholders", function()
     eq(count(view, "ImageWidget"), 1)
     local tappables = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Tappable then tappables = tappables + 1 end end)
-    eq(tappables, 2)
+    eq(tappables, 3) -- two books + the close flower
 end)
 
 test("tapping a book opens its detail page", function()
@@ -880,7 +880,7 @@ test("days without reading are not tappable", function()
     local n = 0
     walk(view, function(x)
         local tx = getmetatable(x) == BlossomView.Tappable and texts(x)
-        if tx and tx ~= "▦" and tx ~= "❀" then n = n + 1 end
+        if tx and tx ~= "▦" and tx ~= "❀" and tx ~= "" then n = n + 1 end -- not the mode icons or the close flower
     end)
     eq(n, 0)
 end)
@@ -898,8 +898,11 @@ test("headers grow a row of flowers; bows only mark finished books", function()
     eq(bows(view), 0)
     local header = view[1][1][1][1]
     local flowers = {}
-    walk(header, function(n) if n.file then flowers[#flowers + 1] = n.file:match("icons/(.-)%.svg$") end end)
-    eq(flowers, { "daisy", "daisy", "sprout", "bud", "daisy", "tulip", "daisy", "bud", "sprout" }) -- title flowers, then the row
+    walk(header, function(n)
+        local name = n.file and n.file:match("icons/(.-)%.svg$")
+        if name and name ~= "close_flower" then flowers[#flowers + 1] = name end
+    end)
+    eq(flowers, { "lily", "lily", "sprout", "bud", "daisy", "tulip", "daisy", "bud", "sprout" }) -- title lilies, then the row
     assert(texts(header):find("^Blossom\n"), texts(header))
     assert(not texts(header):find("❀"), "drawn flowers, not symbols")
     assert(not texts(header):find("♡"), "no hearts in the header")
@@ -911,13 +914,46 @@ test("headers grow a row of flowers; bows only mark finished books", function()
     eq(bows(shown[#shown]), 0) -- unfinished book
 end)
 
-test("pagination hearts are small", function()
+test("pagination: soft dots, a sprout for the current page", function()
     resetDB()
     local view = openView()
-    local dots
-    walk(view, function(n) if n.text == "♥ ♡ ♡ ♡ ♡" then dots = n end end)
-    assert(dots, "compact heart dots")
-    eq(dots.face.size, 13)
+    local function footerDots()
+        local found
+        walk(view, function(n)
+            if n.kind == "HorizontalGroup" and not found then
+                local dots, sprout = 0, 0
+                for _, c in ipairs(n) do
+                    if c.text == "●" then dots = dots + 1 end
+                    if c.file and c.file:find("sprout") then sprout = sprout + 1 end
+                end
+                if dots + sprout == 5 then found = n end
+            end
+        end)
+        return found
+    end
+    local row = footerDots()
+    assert(row, "5 page markers")
+    local first = row[1]
+    assert(first.file and first.file:find("sprout"), "page 1 is the sprout")
+    assert(not texts(view):find("♥ ♡"), "no hearts")
+    view:goToPage(3)
+    row = footerDots()
+    local markers = {}
+    for _, c in ipairs(row) do if c.text or c.file then markers[#markers + 1] = c.file and "sprout" or "dot" end end
+    eq(markers, { "dot", "dot", "sprout", "dot", "dot" })
+end)
+
+test("the close button is a flower at the top-left", function()
+    resetDB()
+    local view = openView()
+    local close
+    walk(view, function(n)
+        if getmetatable(n) == BlossomView.Tappable and n[1] and n[1].file and n[1].file:find("close_flower") then close = n end
+    end)
+    assert(close, "flower close button")
+    eq(close.overlap_offset[1] < 60, true)
+    close:onTap()
+    eq(closed[#closed] == view, true)
 end)
 
 test("gallery covers are cropped to fill their box", function()
@@ -1011,8 +1047,12 @@ test("garden is frameless and centred vertically", function()
     resetDB()
     local view = openView()
     local content = view[1][1][1][3] -- frame > overlap > column > content (after header, span)
-    eq(content.kind, "Centercontainer")
-    eq(content.dimen.h, view.content_h)
+    eq(content.kind, "VerticalGroup")
+    -- the garden centred above, the flower bed at the very bottom of the page area
+    local centre, bed = content[1], content[2]
+    eq(centre.kind, "Centercontainer")
+    eq(centre.dimen.h + bed.height, view.content_h)
+    assert(bed.file:find("garden_bed"))
     local frames = 0
     walk(content, function(n) if n.kind == "Framecontainer" then frames = frames + 1 end end)
     eq(frames, 0)
@@ -1151,7 +1191,7 @@ test("garden shows highlights and bookmarks counts; every number is tappable", f
     assert(t:find("2\nhighlights\n1\nbookmark"), t)
     local n = 0
     walk(view, function(x) if getmetatable(x) == BlossomView.Tappable then n = n + 1 end end)
-    eq(n, 8)
+    eq(n, 9) -- eight numbers + the close flower
 end)
 
 test("garden book pages are galleries: books, time, pages", function()
@@ -1259,6 +1299,28 @@ test("line chart points scale to the busiest month and stop at this month", func
     eq(borders, 3) -- dots only up to this month
     local flat = BlossomView.LineChart:new{ width = 120, height = 100, values = { 0, 0, 0, 0 } }
     eq(select(2, flat:point(2)), 92)
+end)
+
+test("pages opened from the dashboard have a back flower at the top-left", function()
+    resetDB()
+    local view = openView()
+    local function backButton(page)
+        local found
+        walk(page, function(n)
+            if getmetatable(n) == BlossomView.Tappable and n[1] and n[1].file and n[1].file:find("back_flower") then found = n end
+        end)
+        return found
+    end
+    assert(not backButton(view), "the dashboard itself closes, not goes back")
+    view:openMore("highlights")
+    local more = shown[#shown]
+    local back = backButton(more)
+    assert(back, "gallery/list pages have a back flower")
+    eq(back.overlap_offset[1] < 60, true)
+    back:onTap()
+    eq(closed[#closed] == more, true)
+    view:openBook(2)
+    assert(backButton(shown[#shown]), "book details too")
 end)
 
 H.done()

@@ -32,7 +32,7 @@ Swipe left / right (or use the page-turn buttons) between five pages:
 Tap any book to open its **book details**: cover, title, author, a short snippet, a wavy progress line,
 then time together, reading days, pages per hour, time left, highlights and bookmarks, and your highlights from that book.
 
-Swipe **down** or tap **✕** to close.
+Swipe **down** or tap the little **flower ×** (top-left) to close. Pages you open from the dashboard have a **flower ‹** there to go back. The dots at the bottom show which page you're on (a sprout marks the current one).
 
 ## 💕 Install
 

@@ -65,7 +65,7 @@ end
 function BlossomDetail:build()
     local b = self.book
     local gap = px(22)
-    local header = Theme.header(_("Book details"), self.width, function() self:onClose() end, self)
+    local header = Theme.header(_("Book details"), self.width, function() self:onClose() end, self, { back = true })
 
     -- Cover beside: title, author, snippet, wavy progress, "66% read · 250 of 380 pages".
     local ratio = (self.aspect and self.aspect(b)) or 1.45

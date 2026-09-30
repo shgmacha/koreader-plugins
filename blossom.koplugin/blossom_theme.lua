@@ -4,13 +4,14 @@ hearts / flowers from KOReader's fallback fonts (FreeSans / FreeSerif / Noto CJK
 --]]
 
 local Blitbuffer = require("ffi/blitbuffer")
-local Button = require("ui/widget/button")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
+local GestureRange = require("ui/gesturerange")
+local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local Screen = require("device").screen
@@ -245,6 +246,22 @@ function Theme.statGrid(items, width, cols, opts)
     return grid
 end
 
+--- Makes any widget tappable.
+Theme.Tappable = InputContainer:extend{
+    callback = nil,
+}
+
+function Theme.Tappable:init()
+    self.ges_events = {
+        Tap = { GestureRange:new{ ges = "tap", range = function() return self.dimen end } },
+    }
+end
+
+function Theme.Tappable:onTap()
+    if self.callback then self.callback() end
+    return true
+end
+
 --- Width left for content inside a default Theme.card.
 function Theme.cardInner(w)
     return w - 2 * (Size.padding.default + Size.border.thin)
@@ -360,21 +377,22 @@ function Theme.rule(label, width)
     }
 end
 
---- "˚ ❀ Blossom ❀ ˚" / title / bow ribbon, with a ✕ close button on the right.
+--- "Blossom" between flowers / title / a row of flowers, with a flower close button on the left.
 --- opts.title_size and opts.subtitle make a bigger journal-style title.
 function Theme.header(title, width, on_close, show_parent, opts)
+    -- opts.back: a page opened from the dashboard gets a back flower (‹) instead of close (×).
     opts = opts or {}
     local titles = VerticalGroup:new{
         align = "center",
         Theme.vspan(8),
-        -- "Blossom" between two little drawn flowers
+        -- "Blossom" between two little lilies
         HorizontalGroup:new{
             align = "center",
-            Theme.icon("daisy", 16),
+            Theme.icon("lily", 18),
             HorizontalSpan:new{ width = Theme.px(5) },
             Theme.text("Blossom", Theme.face("ui", 12), { color = Theme.soft_ink }),
             HorizontalSpan:new{ width = Theme.px(5) },
-            Theme.icon("daisy", 16),
+            Theme.icon("lily", 18),
         },
         Theme.text(title, Theme.face("script_bold", opts.title_size or 23), { max_width = width - Theme.px(120) }),
     }
@@ -384,14 +402,13 @@ function Theme.header(title, width, on_close, show_parent, opts)
     table.insert(titles, Theme.vspan(2))
     table.insert(titles, Theme.ribbon())
     table.insert(titles, Theme.vspan(4))
-    local close = Button:new{
-        text = "✕",
-        bordersize = 0,
-        text_font_size = 22,
+    -- A cute flower close button, top-left on the page margin.
+    local close = Theme.Tappable:new{
         callback = on_close,
-        show_parent = show_parent,
+        Theme.icon((opts and opts.back) and "back_flower" or "close_flower", 34),
     }
-    close.overlap_align = "right"
+    close.overlap_offset = { Theme.px(Theme.MARGIN) - Theme.px(4), Theme.px(10) }
+
     titles.overlap_align = "center"
     return OverlapGroup:new{
         dimen = Geom:new{ w = width, h = titles:getSize().h },

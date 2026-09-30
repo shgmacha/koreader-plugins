@@ -24,6 +24,7 @@ test("greeting boundaries", function()
     assert(Data.greeting(17):find("evening"))
     assert(Data.greeting(22):find("night owl"))
     assert(Data.greeting(3):find("night owl"))
+    eq(Data.greeting(23), "Hello, night owl") -- no star
 end)
 
 test("date helpers wrap months and years", function()

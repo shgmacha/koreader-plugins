@@ -89,6 +89,7 @@ function BlossomDay:build()
     local gap = px(12)
     local d = select(3, Data.parseDate(day.date))
     local header = Theme.header(tostring(d), self.width, function() self:onClose() end, self, {
+        back = true,
         title_size = 34,
         subtitle = Data.daySubtitle(day.date),
     })

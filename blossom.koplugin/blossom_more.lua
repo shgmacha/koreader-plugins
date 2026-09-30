@@ -142,7 +142,7 @@ function BlossomMore:buildFooter()
 end
 
 function BlossomMore:build()
-    local header = Theme.header(self.title, self.width, function() self:onClose() end, self)
+    local header = Theme.header(self.title, self.width, function() self:onClose() end, self, { back = true })
     local reserve = px(56) -- room for the page footer
     local avail = self.height - header:getSize().h - px(Theme.TOP_GAP) - reserve - px(16)
     local content = VerticalGroup:new{ align = "center" }

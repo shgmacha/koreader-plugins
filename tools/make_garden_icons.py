@@ -63,9 +63,39 @@ def ladybug(x=24, y=26):
 def svg(body, w=48, h=48):
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">{body}</svg>\n'
 
+def close_flower(x=24, y=24):
+    """A round five-petal flower with a little x in its heart: the close button."""
+    out = ""
+    for k in range(5):
+        a = 360 * k / 5
+        out += (f'<ellipse cx="{x}" cy="{y-11}" rx="8" ry="10" transform="rotate({a:.0f} {x} {y})" '
+                f'fill="{LIGHT}" {S} stroke-width="2.2"/>')
+    out += f'<circle cx="{x}" cy="{y}" r="9" fill="white" {S} stroke-width="2.2"/>'
+    out += f'<path d="M{x-3.6} {y-3.6} L{x+3.6} {y+3.6} M{x+3.6} {y-3.6} L{x-3.6} {y+3.6}" {S} stroke-width="2.6" fill="none"/>'
+    return out
+
+def back_flower(x=24, y=24):
+    """The same round flower with a little ‹ in its heart: the back button."""
+    out = close_flower(x, y).rsplit("<path", 1)[0]
+    out += f'<path d="M{x+1.5} {y-4.5} L{x-3} {y} L{x+1.5} {y+4.5}" {S} stroke-width="2.8" fill="none"/>'
+    return out
+
+def lily(x=24, y=24):
+    """A lily bloom seen from above, no stem: six pointed petals and three little stamens."""
+    out = ""
+    for k, fill in [(0, LIGHT), (2, LIGHT), (4, LIGHT), (1, PETAL), (3, PETAL), (5, PETAL)]:
+        a = 60 * k + 30
+        out += (f'<path d="M{x} {y} C{x-7} {y-8} {x-5} {y-16} {x} {y-21} C{x+5} {y-16} {x+7} {y-8} {x} {y} Z" '
+                f'transform="rotate({a} {x} {y})" fill="{fill}" {S} stroke-width="1.9"/>')
+        out += f'<path d="M{x} {y-4} L{x} {y-14}" transform="rotate({a} {x} {y})" stroke="{MID}" stroke-width="1.2" fill="none"/>'
+    for a in (0, 120, 240):
+        out += (f'<path d="M{x} {y} L{x} {y-9}" transform="rotate({a} {x} {y})" {S} stroke-width="1.4" fill="none"/>'
+                f'<circle cx="{x}" cy="{y-10}" r="1.8" transform="rotate({a} {x} {y})" fill="{INK}"/>')
+    return out
+
 ICONS = {
     "tulip": tulip(), "daisy": daisy(), "sprout": sprout(), "rose": rose(), "bud": bud(),
-    "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(),
+    "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(), "close_flower": close_flower(), "back_flower": back_flower(), "lily": lily(),
 }
 
 def bed(w=600, h=90):
