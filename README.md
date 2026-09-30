@@ -23,11 +23,11 @@ Swipe left / right (or use the page-turn buttons) between five pages:
 
 | Page | What you see |
 |------|--------------|
-| **My reading garden** | A greeting, books loved, total reading time, pages turned, your day streak ♥, today, this week, your longest streak and a little affirmation |
+| **My reading garden** | A greeting and eight numbers: books loved, reading time, pages turned, day streak, today, this week, **highlights** and **bookmarks**. Tap any number for its own page: a cover gallery for the books (all books, by time, by pages, your streak, today, this week), or a list of your highlights / bookmarks with the book each one is from |
 | **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (❀ = you read that day) and just the covers of the **books that kept you company** this week |
 | **My books** | A 4×2 gallery of your 8 most recent covers with % read and time spent (a little bow when finished) |
 | **This month** | Month totals and a **cover gallery** (like My books) of what you read that month, or switch to **▦ Calendar** (tap the framed ▦ / ❀ icons beside the month) for a Sunday-first calendar shaded by how long you read, with **book bars** (title · time) stretching across the days you kept reading a book (overlapping books stack). Tap a day to see the books you read, and the highlights and bookmarks you made, that day; use ‹ › to look back at earlier months |
-| **My year** | Your **yearly reading goal** (books finished) as a wavy line with a heart riding along it, "67% of my goal · right on track", your year in numbers and reading by month. Tap the little **✎** beside your goal to change it |
+| **My year** | Your **yearly reading goal** (books finished) as a wavy line with a heart riding along it, "67% of my goal · right on track", your year in numbers and a **line chart** of reading by month. Tap the little **✎** beside your goal to change it |
 
 Tap any book to open its **book details**: cover, title, author, a short snippet, a wavy progress line,
 then time together, reading days, pages per hour, time left, highlights and bookmarks, and your highlights from that book.
@@ -73,6 +73,7 @@ luajit tests/test_plugin_load.lua
 - `blossom_view.lua` — the dashboard pages
 - `blossom_detail.lua` — the book detail page
 - `blossom_day.lua` — the day page (books, highlights, bookmarks)
+- `blossom_more.lua` — the garden's "tell me more" pages (galleries and lists)
 - `blossom_covers.lua` — matches statistics entries to book files and covers
 - `blossom_theme.lua` — grays, fonts and decorations
 - `main.lua` — menu, gesture action and database queries

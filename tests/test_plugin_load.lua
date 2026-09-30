@@ -137,6 +137,8 @@ local stubs = {
                         if db.days_error then error("days broke") end
                         return db.days
                     end
+                    local order = sql:match("WHERE total_read_time > 0 ORDER BY (.-);")
+                    if order and not sql:find("LIMIT") then db.last_order = order; return db.all_books or db.recent end
                     if sql:find("ORDER BY last_open") then return db.recent end
                     if sql:find("JOIN book") then
                         local s, e = sql:match("start_time >= (%d+) AND p.start_time < (%d+)")
@@ -649,9 +651,14 @@ test("year page: goal hearts, status, month chart", function()
     local pencil
     walk(view, function(n) if n.file and n.file:find("icons/pencil.svg$") then pencil = n end end)
     assert(pencil, "pencil icon beside the goal")
-    local bars = 0
-    walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
-    eq(bars, 12)
+    local bars, chart = 0, nil
+    walk(view, function(n)
+        if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end
+        if getmetatable(n) == BlossomView.LineChart then chart = n end
+    end)
+    eq(bars, 0) -- a line chart now, not bars
+    eq({ #chart.values, chart.upto, chart.best }, { 12, tonumber(os.date("%m")), tonumber(os.date("%m")) })
+    assert(t:find("J\nF\nM\nA\nM\nJ\nJ\nA\nS\nO\nN\nD"), t)
     eq(view.periods["year:" .. os.date("%Y")].finished, 1)
     eq(view.periods["year:" .. os.date("%Y")].best_month, tonumber(os.date("%m")))
 end)
@@ -1099,6 +1106,142 @@ test("every page uses the same side margins", function()
     local cell = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
     cell:onTap()
     eq(shown[#shown].inner_w, expected)
+end)
+
+local function gardenTap(view, label)
+    local found
+    walk(view, function(n)
+        if not found and getmetatable(n) == BlossomView.Tappable and texts(n):find("\n" .. label .. "$") then found = n end
+    end)
+    assert(found, "garden stat " .. label)
+    found:onTap()
+    return shown[#shown]
+end
+
+test("garden shows highlights and bookmarks counts; every number is tappable", function()
+    resetDB()
+    db.sidecar = {
+        ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = {
+            { datetime = "2026-08-03 21:00:00", drawer = "lighten", text = "She was the storm.", pageno = 88 },
+            { datetime = "2026-09-01 21:00:00", text = "in Ten", pageno = 99, chapter = "Ten" },
+        } },
+        ["/books/b.epub"] = { annotations = {
+            { datetime = "2026-09-20 10:00:00", drawer = "lighten", text = "Tiny habits.", pageno = 3 },
+        } },
+    }
+    local view = openView()
+    local t = texts(view)
+    assert(t:find("❝ 2\nhighlights\n⚑ 1\nbookmark"), t)
+    local n = 0
+    walk(view, function(x) if getmetatable(x) == BlossomView.Tappable then n = n + 1 end end)
+    eq(n, 8)
+end)
+
+test("garden book pages are galleries: books, time, pages", function()
+    resetDB()
+    local list = {}
+    for i = 1, 10 do list[i] = { i, "Book " .. i, "A", "m" .. i, 100, 10 * i, 60 * i } end
+    db.all_books = cols(list)
+    local view = openView()
+    local more = gardenTap(view, "books loved")
+    eq(getmetatable(more) == require("blossom_more"), true)
+    local t = texts(more)
+    assert(t:find("Books loved"), t)
+    local tiles = 0
+    walk(more, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
+    eq(tiles, 8) -- first page of 10
+    assert(t:find("1 / 2"), t)
+    eq(db.last_order, "last_open DESC")
+    more:onNextPage()
+    tiles = 0
+    walk(more, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
+    eq(tiles, 2)
+    assert(texts(more):find("2 / 2"))
+    more:onNextPage() -- no page 3
+    eq(more.page, 2)
+
+    local time = gardenTap(view, "of stories")
+    eq(db.last_order, "total_read_time DESC")
+    assert(texts(time):find("Of stories"))
+    local pages = gardenTap(view, "pages turned")
+    eq(db.last_order, "total_read_pages DESC")
+    assert(texts(pages):find("Book 1\n10 pages"), texts(pages))
+end)
+
+test("garden period pages: streak, today, week", function()
+    resetDB()
+    local view = openView()
+    local streak = gardenTap(view, "days streak")
+    local from, to = Data.streakRange(view.stats.by_date, today, view.stats.streak)
+    eq(db.period_calls[#db.period_calls], { Data.dayBounds(from), select(2, Data.dayBounds(to)) })
+    assert(texts(streak):find("My streak"))
+    gardenTap(view, "read today")
+    eq(db.period_calls[#db.period_calls], { Data.dayBounds(today) })
+    local week = gardenTap(view, "this week")
+    assert(texts(week):find("This week"))
+end)
+
+test("highlights and bookmarks pages are lists with the book they're from, paged", function()
+    resetDB()
+    local many = {}
+    for i = 1, 30 do
+        many[#many + 1] = { datetime = string.format("2026-09-%02d 10:00:00", i), text = "bm", pageno = i, chapter = "Ch " .. i }
+    end
+    many[#many + 1] = { datetime = "2026-09-15 11:00:00", drawer = "lighten", text = "A quote.", pageno = 5, note = "aww" }
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = many } }
+    local view = openView()
+    local hl = gardenTap(view, "highlight")
+    local t = texts(hl)
+    assert(t:find("My highlights"), t)
+    assert(t:find("\n1 / 1\n", 1, true), t) -- a single page knows it is the last
+    assert(t:find("“A quote.”", 1, true), t)
+    assert(t:find("Anathema · p. 5 · 15 Sep 2026", 1, true), t)
+    assert(t:find("✎ aww", 1, true), t)
+
+    local bm = gardenTap(view, "bookmarks")
+    t = texts(bm)
+    assert(t:find("My bookmarks"), t)
+    assert(t:find("☆  p. 30 · Ch 30", 1, true), t) -- newest first
+    assert(t:find("Anathema · 30 Sep 2026", 1, true), t)
+    assert(bm:hasNext(), "30 bookmarks need more than one page")
+    bm:onNextPage()
+    eq(bm.page, 2)
+    assert(not texts(bm):find("p. 30 ·", 1, true))
+    bm:onPrevPage()
+    assert(texts(bm):find("p. 30 · Ch 30", 1, true))
+    bm:onSwipe(nil, { direction = "south" })
+    eq(closed[#closed] == bm, true)
+    bm:onCloseWidget()
+end)
+
+test("empty garden pages say something sweet", function()
+    resetDB()
+    fs[settings_dir .. "/statistics.sqlite3"] = nil
+    ReadHistory.hist = {}
+    local view = openView()
+    -- the empty garden has no numbers, so open the pages directly
+    view:openMore("highlights")
+    assert(texts(shown[#shown]):find("No highlights yet"))
+    view:openMore("streak")
+    assert(texts(shown[#shown]):find("No streak right now"))
+end)
+
+test("line chart points scale to the busiest month and stop at this month", function()
+    local chart = BlossomView.LineChart:new{ width = 120, height = 100, values = { 0, 50, 100, 25 }, upto = 3, best = 3 }
+    local x1, y1 = chart:point(1)
+    local x3, y3 = chart:point(3)
+    eq({ x1, y1 }, { 15, 92 }) -- zero sits on the bottom padding
+    eq({ x3, y3 }, { 75, 8 })  -- the max touches the top padding
+    chart.top_pad = 26
+    eq(select(2, chart:point(3)), 26) -- room above the best point for the heart
+    local calls = {}
+    local bb = setmetatable({}, { __index = function(_, k) return function(_, ...) calls[#calls + 1] = { k, ... } end end })
+    chart:paintTo(bb, 0, 0)
+    local borders = 0
+    for _, c in ipairs(calls) do if c[1] == "paintBorder" then borders = borders + 1 end end
+    eq(borders, 3) -- dots only up to this month
+    local flat = BlossomView.LineChart:new{ width = 120, height = 100, values = { 0, 0, 0, 0 } }
+    eq(select(2, flat:point(2)), 92)
 end)
 
 H.done()

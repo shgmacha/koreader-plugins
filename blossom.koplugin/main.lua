@@ -69,6 +69,16 @@ local SQL_DAY_BOOKS = [[
     WHERE p.start_time >= %d AND p.start_time < %d
     GROUP BY d, b.id;]]
 
+-- Every book with reading time, for the garden's gallery pages.
+local SQL_ALL_BOOKS = [[
+    SELECT id, title, authors, md5, pages, total_read_pages, total_read_time
+    FROM book WHERE total_read_time > 0 ORDER BY %s;]]
+local BOOK_ORDERS = {
+    recent = "last_open DESC",
+    time = "total_read_time DESC",
+    pages = "total_read_pages DESC",
+}
+
 local SETTINGS_KEY = "blossom"
 
 local Blossom = WidgetContainer:extend{
@@ -268,6 +278,49 @@ function Blossom:loadDay(date)
     return day
 end
 
+--- Every book read, ordered "recent", "time" or "pages".
+function Blossom:loadBooks(order)
+    local list = self:withDB(function(conn)
+        return rows(conn:exec(string.format(SQL_ALL_BOOKS, BOOK_ORDERS[order] or BOOK_ORDERS.recent)),
+            { "id", "title", "authors", "md5", "pages", "read_pages", "seconds" })
+    end) or {}
+    local books = {}
+    for i, row in ipairs(list) do
+        row.period_pages = row.read_pages
+        books[i] = Data.summarizePeriod({ row }, 0).list[1]
+    end
+    return books
+end
+
+--- All highlights and bookmarks from the sidecars of books in the reading history, newest first.
+function Blossom:loadAllNotes()
+    local books = {}
+    local ok, hist = pcall(function() return require("readhistory").hist end)
+    for _, item in ipairs(ok and hist or {}) do
+        local file = item.file
+        if file and lfs.attributes(file, "mode") == "file" then
+            local ok2, err = pcall(function()
+                local doc_settings = require("docsettings"):open(file)
+                local props = doc_settings:readSetting("doc_props") or {}
+                local annotations = doc_settings:readSetting("annotations")
+                books[#books + 1] = {
+                    title = (props.title and props.title ~= "") and props.title
+                        or file:match("([^/]+)%.[^.]+$") or file,
+                    annotations = annotations,
+                    bookmarks = not annotations and doc_settings:readSetting("bookmarks") or nil,
+                }
+            end)
+            if not ok2 then logger.warn("Blossom: could not read sidecar", file, err) end
+        end
+    end
+    local notes = Data.annotations(books)
+    local function newestFirst(list)
+        table.sort(list, function(a, b) return a.datetime > b.datetime end)
+        return list
+    end
+    return { highlights = newestFirst(notes.highlights), bookmarks = newestFirst(notes.bookmarks) }
+end
+
 -- Settings -------------------------------------------------------------------
 
 function Blossom:getGoal()
@@ -290,6 +343,9 @@ function Blossom:show()
     local raw, err = self:loadRaw()
     local stats = Data.summarize(raw, today)
     stats.db_error = err ~= nil and err ~= "missing"
+    local notes = self:loadAllNotes()
+    stats.notes = notes
+    stats.highlights, stats.bookmarks = #notes.highlights, #notes.bookmarks
     self.covers = Covers.new()
     UIManager:show(BlossomView:new{
         stats = stats,
@@ -302,6 +358,8 @@ function Blossom:show()
         loadYear = function(y) return self:loadYear(y) end,
         loadBook = function(id) return self:loadBook(id) end,
         loadDay = function(date) return self:loadDay(date) end,
+        loadBooks = function(order) return self:loadBooks(order) end,
+        loadPeriod = function(s, e) return self:loadPeriod(s, e) end,
         getGoal = function() return self:getGoal() end,
         setGoal = function(goal) self:setGoal(goal) end,
     }, "flashui")

@@ -4,6 +4,7 @@ Blossom's full-screen dashboard: five swipeable pages
 --]]
 
 local BlossomDay = require("blossom_day")
+local BlossomMore = require("blossom_more")
 local BlossomDetail = require("blossom_detail")
 local Blitbuffer = require("ffi/blitbuffer")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
@@ -82,6 +83,69 @@ local GoalWave = Theme.GoalWave
 
 local RoundedFrame = Theme.RoundedFrame
 
+--- A soft line chart: shaded area, a thick line joining the points, a dot on each point.
+--- values = {seconds...}; only the first `upto` points are drawn (the rest of the year is still to come).
+local LineChart = Widget:extend{
+    width = 0,
+    height = 0,
+    values = nil,
+    upto = nil,
+    best = nil,
+    top_pad = nil, -- room above the highest point (for the ♥)
+}
+
+function LineChart:getSize()
+    return Geom:new{ w = self.width, h = self.height }
+end
+
+--- Point i as x, y inside the widget.
+function LineChart:point(i)
+    local n = #self.values
+    local col_w = self.width / n
+    local max = 0
+    for _, v in ipairs(self.values) do max = math.max(max, v) end
+    local pad = Theme.px(8)
+    local top = self.top_pad or pad
+    local ratio = max > 0 and self.values[i] / max or 0
+    return floor((i - 0.5) * col_w), floor(self.height - pad - ratio * (self.height - pad - top))
+end
+
+function LineChart:paintTo(bb, x, y)
+    self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
+    local upto = math.min(self.upto or #self.values, #self.values)
+    local thick = Theme.px(3)
+    bb:paintRect(x, y + self.height - 1, self.width, 1, Theme.petal) -- baseline
+    -- Soft area under the line first, then the line on top (even thickness, steep or flat).
+    for i = 1, upto - 1 do
+        local x1, y1 = self:point(i)
+        local x2, y2 = self:point(i + 1)
+        for dx = 0, x2 - x1 do
+            local yy = floor(y1 + (y2 - y1) * dx / math.max(1, x2 - x1) + 0.5)
+            bb:paintRect(x + x1 + dx, y + yy, 1, self.height - 1 - yy, Theme.card_bg)
+        end
+    end
+    for i = 1, upto - 1 do
+        local x1, y1 = self:point(i)
+        local x2, y2 = self:point(i + 1)
+        local steps = math.max(math.abs(x2 - x1), math.abs(y2 - y1), 1)
+        for k = 0, steps do
+            local cx = floor(x1 + (x2 - x1) * k / steps + 0.5)
+            local cy = floor(y1 + (y2 - y1) * k / steps + 0.5)
+            bb:paintRect(x + cx - floor(thick / 2), y + cy - floor(thick / 2), thick, thick, Theme.bar)
+        end
+    end
+    local dot = Theme.px(9)
+    for i = 1, upto do
+        local px_, py_ = self:point(i)
+        local color = i == self.best and Theme.ink or Theme.accent
+        bb:paintRoundedRect(x + px_ - floor(dot / 2), y + py_ - floor(dot / 2), dot, dot, Theme.bg, floor(dot / 2))
+        bb:paintBorder(x + px_ - floor(dot / 2), y + py_ - floor(dot / 2), dot, dot, Theme.px(2), color, floor(dot / 2))
+        if i == self.best then
+            bb:paintRoundedRect(x + px_ - floor(dot / 4), y + py_ - floor(dot / 4), floor(dot / 2), floor(dot / 2), Theme.ink, floor(dot / 4))
+        end
+    end
+end
+
 --- Makes any widget tappable.
 local Tappable = InputContainer:extend{
     callback = nil,
@@ -148,6 +212,8 @@ local BlossomView = InputContainer:extend{
     loadYear = nil,    -- function(y) -> year summary
     loadBook = nil,    -- function(id) -> book detail
     loadDay = nil,     -- function(date) -> books + highlights + bookmarks of that day
+    loadBooks = nil,   -- function(order) -> every book read ("recent", "time", "pages")
+    loadPeriod = nil,  -- function(start_time, end_time) -> books read in that time
     getGoal = nil,     -- function() -> books per year
     setGoal = nil,     -- function(n)
     page = 1,
@@ -400,6 +466,66 @@ function BlossomView:openDay(date)
     }, "flashui")
 end
 
+--- The garden's "tell me more" pages.
+function BlossomView:openMore(key)
+    local s = self.stats
+    local function books(list, title, subtitle, caption, empty)
+        return BlossomMore:new{
+            title = title,
+            subtitle = subtitle,
+            kind = "gallery",
+            items = list or {},
+            empty_text = empty,
+            gallery = function(slice, avail_h)
+                return self:galleryGrid(slice, avail_h, SHELF_COLS, SHELF_ROWS, caption)
+            end,
+        }
+    end
+    local function count(list) return Data.plural(#(list or {}), _("book"), _("books")) end
+    local function period(cache_key, start_time, end_time)
+        return self:period(cache_key, function() return self.loadPeriod(start_time, end_time) end).list
+    end
+    local page
+    if key == "books" then
+        local list = self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
+        page = books(list, _("Books loved"), count(list) .. " " .. Theme.flower)
+    elseif key == "time" then
+        local list = self:period("all:time", function() return { list = self.loadBooks("time") } end).list
+        page = books(list, _("Of stories"), string.format(_("%s of reading, most loved first ♡"), Data.fmtDuration(s.seconds)))
+    elseif key == "pages" then
+        local list = self:period("all:pages", function() return { list = self.loadBooks("pages") } end).list
+        page = books(list, _("Pages turned"), string.format(_("%d pages %s"), s.pages, Theme.blossom),
+            function(b, w)
+                return text(Data.plural(b.pages, _("page"), _("pages")), Theme.face("script", 15), { max_width = w })
+            end)
+    elseif key == "streak" then
+        local from, to = Data.streakRange(s.by_date, s.today, s.streak)
+        local list = from and period("streak", Data.dayBounds(from), select(2, Data.dayBounds(to))) or {}
+        page = books(list, _("My streak"),
+            from and string.format(_("%d days · %s – %s"), s.streak, Data.dayTitle(from), Data.dayTitle(to)) or nil,
+            nil, _("No streak right now — one page today starts a new one ♡"))
+    elseif key == "today" then
+        local list = period("today", Data.dayBounds(s.today))
+        page = books(list, _("Read today"), Data.fmtDuration(s.today_seconds) .. " " .. Theme.star,
+            nil, _("Nothing read yet today — a cozy chapter awaits ❀"))
+    elseif key == "week" then
+        local list = self:period("week", self.loadWeek).list
+        page = books(list, _("This week"), Data.fmtDuration(s.week_seconds) .. " ✧",
+            nil, _("No books yet this week ❀"))
+    elseif key == "highlights" or key == "bookmarks" then
+        local list = (s.notes or {})[key] or {}
+        page = BlossomMore:new{
+            title = key == "highlights" and _("My highlights") or _("My bookmarks"),
+            subtitle = Data.plural(#list, key == "highlights" and _("highlight") or _("bookmark"),
+                key == "highlights" and _("highlights") or _("bookmarks")) .. ", newest first",
+            kind = key,
+            items = list,
+            empty_text = key == "highlights" and _("No highlights yet ♡") or _("No bookmarks yet ☆"),
+        }
+    end
+    if page then UIManager:show(page, "flashui") end
+end
+
 -- Pages ------------------------------------------------------------------------
 
 function BlossomView:build_overview()
@@ -411,6 +537,8 @@ function BlossomView:build_overview()
     end
     -- No frames: a greeting, soft numbers on the page, a quiet line of love. Centred.
     local streak_label = s.streak == 1 and _("day streak") or _("days streak")
+    -- Every number is tappable and opens its own page.
+    local keys = { "books", "time", "pages", "streak", "today", "week", "highlights", "bookmarks" }
     local stats = Theme.statGrid({
         { Theme.flower, tostring(s.books), _("books loved") },
         { Theme.open_heart, Data.fmtDuration(s.seconds), _("of stories") },
@@ -418,7 +546,12 @@ function BlossomView:build_overview()
         { Theme.heart, tostring(s.streak), streak_label },
         { Theme.star, Data.fmtDuration(s.today_seconds), _("read today") },
         { "✧", Data.fmtDuration(s.week_seconds), _("this week") },
-    }, math.min(self.inner_w, px(600)), 3, { value_size = 21, label_size = 15, cell_h = 66, row_gap = 34 })
+        { "❝", tostring(s.highlights or 0), (s.highlights == 1) and _("highlight") or _("highlights") },
+        { "⚑", tostring(s.bookmarks or 0), (s.bookmarks == 1) and _("bookmark") or _("bookmarks") },
+    }, self.inner_w, 4, { value_size = 20, label_size = 14, cell_h = 66, row_gap = 34,
+        wrap = function(cell, i)
+            return Tappable:new{ callback = function() self:openMore(keys[i]) end, cell }
+        end })
     local garden = VerticalGroup:new{
         align = "center",
         text(Data.greeting(self.hour), Theme.face("script", 24)),
@@ -513,7 +646,7 @@ end
 
 
 --- Gallery tile: one rounded frame holding the cover edge to edge, then title and progress.
-function BlossomView:galleryTile(b, w, cover_h)
+function BlossomView:galleryTile(b, w, cover_h, caption)
     local border = Size.border.thin
     local inner = w - 2 * border
     local pad = px(6)
@@ -529,7 +662,7 @@ function BlossomView:galleryTile(b, w, cover_h)
             self:art(b, inner, cover_h, true, true),
             vspan(6),
             text(b.title, Theme.face("bold", 14), { max_width = inner - 2 * pad }),
-            self:timeCaption(b, Theme.face("script", 15), inner - 2 * pad, prefix),
+            caption and caption(b, inner - 2 * pad) or self:timeCaption(b, Theme.face("script", 15), inner - 2 * pad, prefix),
             vspan(7),
         },
     }, b)
@@ -550,7 +683,7 @@ end
 
 --- Up to 3×2 framed covers fitting `avail_h`; narrower tiles when height is tight,
 --- so covers keep their book shape.
-function BlossomView:galleryGrid(books, avail_h, cols, rows)
+function BlossomView:galleryGrid(books, avail_h, cols, rows, caption)
     cols, rows = cols or BOOK_COLS, rows or BOOK_ROWS
     local gap_x, gap_y = px(cols > 3 and 12 or 16), px(18)
     local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
@@ -566,7 +699,7 @@ function BlossomView:galleryGrid(books, avail_h, cols, rows)
         local row = HorizontalGroup:new{ align = "top" }
         for i = (r - 1) * cols + 1, math.min(shown, r * cols) do
             if #row > 0 then table.insert(row, hspan(gap_x)) end
-            table.insert(row, self:galleryTile(books[i], tile_w, cover_h))
+            table.insert(row, self:galleryTile(books[i], tile_w, cover_h, caption))
         end
         if r > 1 then table.insert(group, VerticalSpan:new{ width = gap_y }) end
         table.insert(group, row)
@@ -859,9 +992,31 @@ function BlossomView:build_year()
 end
 
 --- Open (unboxed) month chart: slim bars, ♥ over the best month, this month in bold.
-function BlossomView:monthChart(year, bar_h)
-    local chart = barChart(year.months, year.best_month, self.inner_w, bar_h, self.this_month)
-    return chart[1] -- the bars without the card frame
+--- Reading by month as a line chart: ♥ over the best month, this month in bold, future months blank.
+function BlossomView:monthChart(year, chart_h)
+    local values = {}
+    for i, m in ipairs(year.months) do values[i] = m.seconds end
+    local upto = self.year == self.this_year and self.this_month or 12
+    local chart = LineChart:new{ width = self.inner_w, height = chart_h, values = values, upto = upto,
+                                 best = year.best_month, top_pad = px(26) }
+    local overlay = OverlapGroup:new{ dimen = Geom:new{ w = self.inner_w, h = chart_h }, chart }
+    if year.best_month then
+        local bx, by = chart:point(year.best_month)
+        local heart = text(Theme.heart, Theme.face("ui", 12), { color = Theme.soft_ink })
+        local hs = heart:getSize()
+        heart.overlap_offset = { bx - floor(hs.w / 2), math.max(0, by - hs.h - px(8)) }
+        table.insert(overlay, heart)
+    end
+    local col_w = floor(self.inner_w / 12)
+    local labels = HorizontalGroup:new{ align = "center" }
+    for i, m in ipairs(year.months) do
+        table.insert(labels, CenterContainer:new{
+            dimen = Geom:new{ w = col_w, h = px(24) },
+            text(m.label, Theme.face(i == self.this_month and "bold" or "ui", 13),
+                { color = i > upto and Theme.shades[3] or Theme.ink }),
+        })
+    end
+    return VerticalGroup:new{ align = "center", overlay, vspan(4), labels }
 end
 
 function BlossomView:editGoal(goal)
@@ -936,6 +1091,7 @@ BlossomView.PAGES = PAGES
 BlossomView.Bar = Bar
 BlossomView.Tappable = Tappable
 BlossomView.GoalWave = GoalWave
+BlossomView.LineChart = LineChart
 BlossomView.RoundedFrame = RoundedFrame
 
 return BlossomView

@@ -337,4 +337,10 @@ test("weekLanes clips spans to the week and stacks overlaps", function()
     eq(Data.calendar(2026, 9, {}, "2026-09-30").start, "2026-08-30")
 end)
 
+test("streakRange ends today when read today, else yesterday", function()
+    eq({ Data.streakRange({ ["2026-09-30"] = 60 }, "2026-09-30", 3) }, { "2026-09-28", "2026-09-30" })
+    eq({ Data.streakRange({}, "2026-09-30", 2) }, { "2026-09-28", "2026-09-29" })
+    eq(Data.streakRange({}, "2026-09-30", 0), nil)
+end)
+
 H.done()

@@ -363,6 +363,13 @@ function Data.weekLanes(spans, week_start, max_lanes)
     return out
 end
 
+--- First and last day of the current streak (nil when there is none).
+function Data.streakRange(by_date, today, streak)
+    if not streak or streak <= 0 then return end
+    local last = ((by_date or {})[today] or 0) > 0 and today or Data.addDays(today, -1)
+    return Data.addDays(last, -(streak - 1)), last
+end
+
 -- Yearly goal ----------------------------------------------------------------
 
 function Data.validGoal(goal)

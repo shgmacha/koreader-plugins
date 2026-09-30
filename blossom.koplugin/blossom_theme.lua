@@ -227,14 +227,15 @@ function Theme.statGrid(items, width, cols, opts)
             row = HorizontalGroup:new{ align = "top" }
             table.insert(grid, row)
         end
-        table.insert(row, CenterContainer:new{
+        local cell = CenterContainer:new{
             dimen = Geom:new{ w = col_w, h = Theme.px(opts.cell_h or 46) },
             VerticalGroup:new{
                 align = "center",
                 Theme.text(item[1] .. " " .. item[2], Theme.face("bold", opts.value_size or 16), { max_width = col_w }),
                 Theme.text(item[3], Theme.face("script", opts.label_size or 13), { color = Theme.soft_ink, max_width = col_w }),
             },
-        })
+        }
+        table.insert(row, opts.wrap and opts.wrap(cell, i) or cell)
     end
     return grid
 end
