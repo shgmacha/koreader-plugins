@@ -1,8 +1,9 @@
 --[[--
-Blossom's full-screen dashboard: four swipeable pages
-(overview, this week, my books, this month) drawn in soft grays.
+Blossom's full-screen dashboard: five swipeable pages
+(overview, this week, my books, this month, my year) drawn in soft grays.
 --]]
 
+local BlossomDetail = require("blossom_detail")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
 local Button = require("ui/widget/button")
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -15,11 +16,13 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
+local RectSpan = require("ui/widget/rectspan")
 local Size = require("ui/size")
+local SpinWidget = require("ui/widget/spinwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
-local TextWidget = require("ui/widget/textwidget")
 local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
@@ -32,17 +35,20 @@ local Theme = require("blossom_theme")
 
 local px = Theme.px
 local floor = math.floor
+local text, vspan, cardInner = Theme.text, Theme.vspan, Theme.cardInner
 
-local PAGES = { "overview", "week", "books", "month" }
+local PAGES = { "overview", "week", "books", "month", "year" }
 local TITLES = {
     overview = _("My reading garden"),
     week = _("This week"),
     books = _("My books"),
     month = _("This month"),
+    year = _("My year"),
 }
 local WEEK_TILES = 4
 local MONTH_COLS, MONTH_ROWS = 3, 3
 local COVER_RATIO = 1.45
+local MAX_HEART_GLYPHS = 24
 
 -- Small widgets --------------------------------------------------------------
 
@@ -51,6 +57,7 @@ local Bar = Widget:extend{
     width = 0,
     height = 0,
     ratio = 0,
+    strong = false, -- darker fill for the best day / month
 }
 
 function Bar:getSize()
@@ -63,27 +70,63 @@ function Bar:paintTo(bb, x, y)
     bb:paintRoundedRect(x, y, self.width, self.height, Theme.petal, r)
     if self.ratio > 0 then
         local fill = math.min(self.height, math.max(self.width, floor(self.height * self.ratio + 0.5)))
-        bb:paintRoundedRect(x, y + self.height - fill, self.width, fill, Theme.accent, r)
+        bb:paintRoundedRect(x, y + self.height - fill, self.width, fill,
+            self.strong and Theme.accent or Theme.bar, r)
     end
 end
 
-local function text(str, face, opts)
-    opts = opts or {}
-    return TextWidget:new{
-        text = str,
-        face = face,
-        fgcolor = opts.color or Theme.ink,
-        max_width = opts.max_width,
-        bold = opts.bold,
+--- Makes any widget tappable.
+local Tappable = InputContainer:extend{
+    callback = nil,
+}
+
+function Tappable:init()
+    self.ges_events = {
+        Tap = { GestureRange:new{ ges = "tap", range = function() return self.dimen end } },
     }
 end
 
-local function vspan(n) return VerticalSpan:new{ width = px(n) } end
+function Tappable:onTap()
+    if self.callback then self.callback() end
+    return true
+end
+
 local function hspan(n) return HorizontalSpan:new{ width = n } end
 
---- Width left for content inside Theme.card with default padding.
-local function cardInner(w)
-    return w - 2 * (Size.padding.default + Size.border.thin)
+--- Height of a group we're still adding to (VerticalGroup caches its layout on getSize).
+local function heightOf(group)
+    local h = group:getSize().h
+    group:resetLayout()
+    return h
+end
+
+--- A column chart of `values` ({label, seconds}), ♥ above the best one.
+local function barChart(values, best, width, bar_h, today_index)
+    local max = 0
+    for _, v in ipairs(values) do max = math.max(max, v.seconds) end
+    local col_w = floor(width / #values)
+    local chart = HorizontalGroup:new{ align = "bottom" }
+    for i, v in ipairs(values) do
+        local top = v.top or " "
+        if i == best then top = Theme.heart end
+        table.insert(chart, CenterContainer:new{
+            dimen = Geom:new{ w = col_w, h = bar_h + px(56) },
+            VerticalGroup:new{
+                align = "center",
+                text(top, Theme.face("ui", 12), { color = Theme.soft_ink, max_width = col_w }),
+                vspan(2),
+                Bar:new{
+                    width = math.max(px(6), floor(col_w * 0.36)),
+                    height = bar_h,
+                    ratio = max > 0 and v.seconds / max or 0,
+                    strong = i == best,
+                },
+                vspan(2),
+                text(v.label, Theme.face(i == today_index and "bold" or "ui", 14)),
+            },
+        })
+    end
+    return Theme.card(chart, { background = Theme.bg })
 end
 
 -- View -----------------------------------------------------------------------
@@ -94,7 +137,12 @@ local BlossomView = InputContainer:extend{
     covers = nil,      -- blossom_covers instance
     loadWeek = nil,    -- function() -> period summary
     loadMonth = nil,   -- function(y, m) -> period summary
+    loadYear = nil,    -- function(y) -> year summary
+    loadBook = nil,    -- function(id) -> book detail
+    getGoal = nil,     -- function() -> books per year
+    setGoal = nil,     -- function(n)
     page = 1,
+    month_mode = "covers", -- or "calendar"
     covers_fullscreen = true,
 }
 
@@ -126,9 +174,9 @@ end
 
 function BlossomView:build()
     if self[1] then self[1]:free() end
-    local header = self:buildHeader()
+    local header = Theme.header(TITLES[PAGES[self.page]], self.width, function() self:onClose() end, self)
     local footer = self:buildFooter()
-    self.content_h = self.height - header:getSize().h - footer:getSize().h - px(8)
+    self.content_h = self.height - header:getSize().h - footer:getSize().h - px(16)
     local content = self["build_" .. PAGES[self.page]](self)
     local full = Geom:new{ w = self.width, h = self.height }
     self[1] = FrameContainer:new{
@@ -142,38 +190,11 @@ function BlossomView:build()
             VerticalGroup:new{
                 align = "center",
                 header,
-                CenterContainer:new{
-                    dimen = Geom:new{ w = self.width, h = self.content_h },
-                    content,
-                },
+                vspan(8),
+                content,
             },
             BottomContainer:new{ dimen = full, footer },
         },
-    }
-end
-
-function BlossomView:buildHeader()
-    local titles = VerticalGroup:new{
-        align = "center",
-        vspan(8),
-        text("˚ ✿ Blossom ✿ ˚", Theme.face("ui", 14), { color = Theme.soft_ink }),
-        text(TITLES[PAGES[self.page]], Theme.face("script_bold", 28)),
-        text(Theme.ribbon, Theme.face("ui", 14), { color = Theme.accent }),
-        vspan(4),
-    }
-    local close = Button:new{
-        text = "✕",
-        bordersize = 0,
-        text_font_size = 22,
-        callback = function() self:onClose() end,
-        show_parent = self,
-    }
-    close.overlap_align = "right"
-    titles.overlap_align = "center"
-    return OverlapGroup:new{
-        dimen = Geom:new{ w = self.width, h = titles:getSize().h },
-        titles,
-        close,
     }
 end
 
@@ -197,9 +218,9 @@ function BlossomView:buildFooter()
         HorizontalGroup:new{
             align = "center",
             arrow("‹", function() self:onPrevPage() end),
-            hspan(px(16)),
-            text(table.concat(dots, "   "), Theme.face("ui", 20), { color = Theme.accent }),
-            hspan(px(16)),
+            hspan(px(12)),
+            text(table.concat(dots, "  "), Theme.face("ui", 20), { color = Theme.accent }),
+            hspan(px(12)),
             arrow("›", function() self:onNextPage() end),
         },
         vspan(6),
@@ -209,6 +230,7 @@ end
 function BlossomView:emptyState(message)
     return VerticalGroup:new{
         align = "center",
+        vspan(80),
         text(Theme.blossom, Theme.face("ui", 64), { color = Theme.accent }),
         vspan(10),
         TextBoxWidget:new{
@@ -218,6 +240,19 @@ function BlossomView:emptyState(message)
             alignment = "center",
             bgcolor = Theme.bg,
         },
+    }
+end
+
+function BlossomView:smallButton(label, callback)
+    return Button:new{
+        text = label,
+        bordersize = Size.border.thin,
+        radius = px(14),
+        text_font_face = "cfont",
+        text_font_size = 16,
+        text_font_bold = false,
+        callback = callback,
+        show_parent = self,
     }
 end
 
@@ -232,46 +267,49 @@ function BlossomView:coverBB(md5)
     return self.cover_bbs[md5] or nil
 end
 
---- A polaroid-style tile: cover (or a cute placeholder) and a caption.
-function BlossomView:tile(book, cover_w, cover_h)
-    local dimen = Geom:new{ w = cover_w, h = cover_h }
+--- The cover, or a soft placeholder with a flower (and the title if there's room).
+function BlossomView:art(book, w, h, show_title)
+    local dimen = Geom:new{ w = w, h = h }
     local bb = self:coverBB(book.md5)
-    local art
     if bb then
-        art = CenterContainer:new{
+        return CenterContainer:new{
             dimen = dimen,
-            ImageWidget:new{
-                image = bb,
-                image_disposable = false,
-                width = cover_w,
-                height = cover_h,
-                scale_factor = 0,
-            },
-        }
-    else
-        art = FrameContainer:new{
-            width = cover_w,
-            height = cover_h,
-            background = Theme.petal,
-            bordersize = 0,
-            padding = 0,
-            radius = px(6),
-            CenterContainer:new{
-                dimen = dimen,
-                TextBoxWidget:new{
-                    text = Theme.flower .. "\n" .. book.title,
-                    face = Theme.face("script", 14),
-                    width = cover_w - px(8),
-                    height = cover_h - px(8),
-                    height_overflow_show_ellipsis = true,
-                    alignment = "center",
-                    bgcolor = Theme.petal,
-                },
-            },
+            ImageWidget:new{ image = bb, image_disposable = false, width = w, height = h, scale_factor = 0 },
         }
     end
-    local caption = Data.fmtDuration(book.seconds) .. (book.finished and (" " .. Theme.heart) or "")
+    local label = show_title
+        and TextBoxWidget:new{
+            text = Theme.flower .. "\n" .. book.title,
+            face = Theme.face("script", 14),
+            width = w - px(8),
+            height = h - px(8),
+            height_overflow_show_ellipsis = true,
+            alignment = "center",
+            bgcolor = Theme.petal,
+        }
+        or text(Theme.flower, Theme.face("ui", math.max(12, floor(h / 3))), { color = Theme.bg })
     return FrameContainer:new{
+        width = w,
+        height = h,
+        background = Theme.petal,
+        bordersize = 0,
+        padding = 0,
+        radius = px(6),
+        CenterContainer:new{ dimen = dimen, label },
+    }
+end
+
+function BlossomView:tappable(widget, book)
+    return Tappable:new{
+        callback = function() self:openBook(book.id) end,
+        widget,
+    }
+end
+
+--- A polaroid-style tile: cover (or a cute placeholder) and a caption.
+function BlossomView:tile(book, cover_w, cover_h)
+    local caption = Data.fmtDuration(book.seconds) .. (book.finished and (" " .. Theme.heart) or "")
+    return self:tappable(FrameContainer:new{
         bordersize = Size.border.thin,
         color = Theme.accent,
         radius = px(8),
@@ -280,10 +318,10 @@ function BlossomView:tile(book, cover_w, cover_h)
         margin = 0,
         VerticalGroup:new{
             align = "center",
-            art,
+            self:art(book, cover_w, cover_h, true),
             text(caption, Theme.face("script", 14), { max_width = cover_w }),
         },
-    }
+    }, book)
 end
 
 local TILE_PAD = 4
@@ -307,16 +345,28 @@ function BlossomView:tileRow(books, from, to, cover_w, cover_h, gap)
     return row
 end
 
---- Loads a period once, with a gentle message while covers are gathered.
+--- Loads data once, with a gentle message while petals (covers) are gathered.
 function BlossomView:period(key, loader)
     if self.periods[key] == nil then
-        local msg = InfoMessage:new{ text = _("Gathering petals… ✿") }
+        local msg = InfoMessage:new{ text = _("Gathering petals… ❀") }
         UIManager:show(msg)
         UIManager:forceRePaint()
         self.periods[key] = loader() or Data.summarizePeriod({}, 0)
         UIManager:close(msg)
     end
     return self.periods[key]
+end
+
+function BlossomView:openBook(id)
+    local detail = id and self.loadBook and self.loadBook(id)
+    if not detail then
+        UIManager:show(InfoMessage:new{ text = _("Couldn't find this book's petals ❀"), timeout = 3 })
+        return
+    end
+    UIManager:show(BlossomDetail:new{
+        book = detail,
+        art = function(book, w, h) return self:art(book, w, h, true) end,
+    }, "flashui")
 end
 
 -- Pages ------------------------------------------------------------------------
@@ -326,7 +376,7 @@ function BlossomView:build_overview()
     if s.empty then
         return self:emptyState(s.db_error
             and _("Couldn't open your reading statistics. Is the Statistics plugin enabled? ♡")
-            or _("Your garden is waiting to bloom ✿\nStart reading and your stats will grow here."))
+            or _("Your garden is waiting to bloom ❀\nStart reading and your stats will grow here."))
     end
     local gap = px(10)
     local card_w = floor((self.inner_w - gap) / 2)
@@ -375,36 +425,6 @@ function BlossomView:build_overview()
     }
 end
 
-function BlossomView:weekChart()
-    local s = self.stats
-    local max = 0
-    for _, day in ipairs(s.week) do max = math.max(max, day.seconds) end
-    local col_w = floor(cardInner(self.inner_w) / 7)
-    local bar_h = math.max(px(40), floor(self.content_h * 0.28))
-    local chart = HorizontalGroup:new{ align = "bottom" }
-    for i, day in ipairs(s.week) do
-        local top = day.seconds > 0 and Data.fmtDuration(day.seconds) or " "
-        if i == s.best_day_index then top = Theme.heart end
-        local is_today = i == #s.week
-        table.insert(chart, CenterContainer:new{
-            dimen = Geom:new{ w = col_w, h = bar_h + px(56) },
-            VerticalGroup:new{
-                align = "center",
-                text(top, Theme.face("ui", 12), { color = Theme.soft_ink, max_width = col_w }),
-                vspan(2),
-                Bar:new{
-                    width = floor(col_w * 0.5),
-                    height = bar_h,
-                    ratio = max > 0 and day.seconds / max or 0,
-                },
-                vspan(2),
-                text(day.label, Theme.face(is_today and "bold" or "ui", 14)),
-            },
-        })
-    end
-    return Theme.card(chart, { background = Theme.bg })
-end
-
 function BlossomView:build_week()
     local s = self.stats
     local gap = px(10)
@@ -416,9 +436,17 @@ function BlossomView:build_week()
         text(best and string.format(_("best day: %s %s"), os.date("%A", os.time{
                 year = tonumber(best.date:sub(1, 4)), month = tonumber(best.date:sub(6, 7)),
                 day = tonumber(best.date:sub(9, 10)), hour = 12 }), Theme.heart)
-            or _("a fresh week to bloom ✿"),
+            or _("a fresh week to bloom ❀"),
             Theme.face("script", 16), { color = Theme.soft_ink }),
     }
+    local days = {}
+    for i, day in ipairs(s.week) do
+        days[i] = { label = day.label, seconds = day.seconds,
+                    top = day.seconds > 0 and Data.fmtDuration(day.seconds) or nil }
+    end
+    local chart = barChart(days, s.best_day_index, cardInner(self.inner_w),
+        math.max(px(40), floor(self.content_h * 0.28)), #days)
+
     local flowers = {}
     for i, read in ipairs(s.flowers) do flowers[i] = read and Theme.flower or "·" end
     local garden = VerticalGroup:new{
@@ -431,29 +459,28 @@ function BlossomView:build_week()
         align = "center",
         headline,
         VerticalSpan:new{ width = gap },
-        self:weekChart(),
+        chart,
         VerticalSpan:new{ width = gap },
         garden,
         VerticalSpan:new{ width = gap },
     }
 
     local week = self:period("week", self.loadWeek)
-    local company = text(_("Books that kept me company ♡"), Theme.face("script_bold", 18))
-    table.insert(group, company)
+    table.insert(group, text(_("Books that kept me company ♡"), Theme.face("script_bold", 18)))
     table.insert(group, vspan(6))
     if week.books == 0 then
-        table.insert(group, text(_("No books yet this week ✿"), Theme.face("script", 16), { color = Theme.soft_ink }))
+        table.insert(group, text(_("No books yet this week ❀"), Theme.face("script", 16), { color = Theme.soft_ink }))
         return group
     end
     local shown = math.min(WEEK_TILES, week.books)
-    local avail = self.content_h - group:getSize().h - px(24)
+    local avail = self.content_h - heightOf(group) - px(24)
     local cover_w, cover_h = self:coverSize(WEEK_TILES, gap, avail)
     if cover_h < px(50) then
         -- Too little room for covers: a sweet list instead.
         for i = 1, shown do
             local b = week.list[i]
-            table.insert(group, text(string.format("%s %s · %s", Theme.flower, b.title, Data.fmtDuration(b.seconds)),
-                Theme.face("script", 16), { max_width = self.inner_w }))
+            table.insert(group, self:tappable(text(string.format("%s %s · %s", Theme.flower, b.title,
+                Data.fmtDuration(b.seconds)), Theme.face("script", 16), { max_width = self.inner_w }), b))
         end
     else
         table.insert(group, self:tileRow(week.list, 1, shown, cover_w, cover_h, gap))
@@ -468,15 +495,16 @@ end
 function BlossomView:build_books()
     local s = self.stats
     if #s.recent == 0 then
-        return self:emptyState(_("No books on your shelf yet ✿\nOpen a book and it will bloom here."))
+        return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
     local gap = px(8)
     local n = #s.recent
     local chrome = 2 * (Size.padding.default + Size.border.thin)
     local row_h = math.min(px(96), floor((self.content_h - gap * (n - 1)) / n) - chrome)
     local inner = cardInner(self.inner_w)
-    local glyph_w = px(36)
-    local body_w = inner - glyph_w
+    local thumb_h = row_h
+    local thumb_w = floor(thumb_h / COVER_RATIO)
+    local body_w = inner - thumb_w - px(12)
     local group = VerticalGroup:new{ align = "center" }
     for i, b in ipairs(s.recent) do
         local pct = floor(b.progress * 100 + 0.5)
@@ -509,17 +537,88 @@ function BlossomView:build_books()
             },
         }
         if i > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
-        table.insert(group, Theme.card(HorizontalGroup:new{
+        table.insert(group, self:tappable(Theme.card(HorizontalGroup:new{
             align = "center",
-            CenterContainer:new{
-                dimen = Geom:new{ w = glyph_w, h = row_h },
-                text(b.finished and Theme.heart or (i % 2 == 1 and Theme.flower or Theme.blossom),
-                    Theme.face("ui", 24), { color = Theme.accent }),
-            },
-            body,
-        }))
+            self:art(b, thumb_w, thumb_h, false),
+            hspan(px(12)),
+            LeftContainer:new{ dimen = Geom:new{ w = body_w, h = row_h }, body },
+        }), b))
     end
     return group
+end
+
+function BlossomView:calendarGrid(avail_h)
+    local cal = Data.calendar(self.year, self.month, self.stats.by_date, self.stats.today)
+    local gap = px(4)
+    local header_h = text("Su", Theme.face("bold", 14)):getSize().h
+    local legend_h = px(30)
+    local cell = floor(math.min((self.inner_w - 6 * gap) / 7,
+        (avail_h - header_h - legend_h - cal.rows * gap) / cal.rows))
+    local function row(items)
+        local r = HorizontalGroup:new{ align = "center" }
+        for i, w in ipairs(items) do
+            if i > 1 then table.insert(r, hspan(gap)) end
+            table.insert(r, w)
+        end
+        return r
+    end
+    local grid = VerticalGroup:new{ align = "center" }
+    local heads = {}
+    for i, h in ipairs(cal.headers) do
+        heads[i] = CenterContainer:new{
+            dimen = Geom:new{ w = cell, h = header_h },
+            text(h, Theme.face("bold", 14), { color = Theme.soft_ink }),
+        }
+    end
+    table.insert(grid, row(heads))
+    for r = 1, cal.rows do
+        local cells = {}
+        for c = 1, 7 do
+            local day = cal.cells[(r - 1) * 7 + c]
+            if not day then
+                cells[c] = RectSpan:new{ width = cell, height = cell }
+            else
+                local border = day.today and Size.border.thick or Size.border.thin
+                local inner = cell - 2 * border
+                local label = VerticalGroup:new{
+                    align = "center",
+                    text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 14),
+                        { color = day.future and Theme.accent or Theme.ink }),
+                }
+                if day.level > 0 and inner > px(34) then
+                    table.insert(label, text(Theme.flower, Theme.face("ui", 11)))
+                end
+                cells[c] = FrameContainer:new{
+                    width = cell,
+                    height = cell,
+                    padding = 0,
+                    margin = 0,
+                    radius = px(8),
+                    bordersize = border,
+                    color = day.today and Theme.ink or Theme.petal,
+                    background = Theme.shades[day.level + 1],
+                    CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner }, label },
+                }
+            end
+        end
+        table.insert(grid, VerticalSpan:new{ width = gap })
+        table.insert(grid, row(cells))
+    end
+    -- Legend: less ▢ ▢ ▢ ▢ more
+    local legend = HorizontalGroup:new{ align = "center",
+        text(_("less "), Theme.face("script", 14), { color = Theme.soft_ink }) }
+    for i = 1, #Theme.shades do
+        table.insert(legend, FrameContainer:new{
+            padding = 0, margin = 0, radius = px(4),
+            bordersize = Size.border.thin, color = Theme.accent, background = Theme.shades[i],
+            RectSpan:new{ width = px(16), height = px(16) },
+        })
+        table.insert(legend, hspan(px(4)))
+    end
+    table.insert(legend, text(_(" more"), Theme.face("script", 14), { color = Theme.soft_ink }))
+    table.insert(grid, vspan(8))
+    table.insert(grid, legend)
+    return grid
 end
 
 function BlossomView:build_month()
@@ -527,6 +626,7 @@ function BlossomView:build_month()
     local key = string.format("%04d-%02d", self.year, self.month)
     local month = self:period(key, function() return self.loadMonth(self.year, self.month) end)
     local is_current = self.year == self.this_year and self.month == self.this_month
+    local calendar_mode = self.month_mode == "calendar"
 
     local function nav(glyph, enabled, delta)
         return Button:new{
@@ -555,16 +655,26 @@ function BlossomView:build_month()
         dimen = Geom:new{ w = cardInner(self.inner_w), h = px(30) },
         text(summary, Theme.face("script", 16), { max_width = cardInner(self.inner_w) }),
     }, { radius = px(18) })
+    local toggle = self:smallButton(calendar_mode and _("❀ covers") or _("▦ calendar"), function()
+        self.month_mode = calendar_mode and "covers" or "calendar"
+        self:refresh()
+    end)
 
     local group = VerticalGroup:new{
         align = "center",
         switcher,
         pill,
+        vspan(6),
+        toggle,
         VerticalSpan:new{ width = gap },
     }
+    if calendar_mode then
+        table.insert(group, self:calendarGrid(self.content_h - heightOf(group)))
+        return group
+    end
     if month.books == 0 then
         table.insert(group, vspan(30))
-        table.insert(group, text(_("No blooms this month ✿"), Theme.face("script", 22), { color = Theme.soft_ink }))
+        table.insert(group, text(_("No blooms this month ❀"), Theme.face("script", 22), { color = Theme.soft_ink }))
         return group
     end
 
@@ -572,7 +682,7 @@ function BlossomView:build_month()
     local shown = math.min(max_tiles, month.books)
     local more_h = month.books > shown and px(24) or 0
     local rows = math.ceil(shown / MONTH_COLS)
-    local avail = floor((self.content_h - group:getSize().h - more_h) / MONTH_ROWS) - gap
+    local avail = floor((self.content_h - heightOf(group) - more_h) / MONTH_ROWS) - gap
     local cover_w, cover_h = self:coverSize(MONTH_COLS, gap, avail)
     for r = 1, rows do
         local from = (r - 1) * MONTH_COLS + 1
@@ -584,6 +694,83 @@ function BlossomView:build_month()
             Theme.face("script", 16), { color = Theme.soft_ink }))
     end
     return group
+end
+
+--- ♥ for finished books, ♡ for the rest, in rows of 12.
+local function heartRows(finished, goal)
+    local lines = VerticalGroup:new{ align = "center" }
+    local line = {}
+    for i = 1, goal do
+        line[#line + 1] = i <= finished and Theme.heart or Theme.open_heart
+        if #line == 12 or i == goal then
+            table.insert(lines, text(table.concat(line, " "), Theme.face("ui", 22), { color = Theme.accent }))
+            line = {}
+        end
+    end
+    return lines
+end
+
+function BlossomView:build_year()
+    local gap = px(10)
+    local year = self:period("year:" .. self.this_year, function() return self.loadYear(self.this_year) end)
+    local goal = Data.validGoal(self.getGoal and self.getGoal())
+    local status = Data.goalStatus(year.finished, goal, self.stats.today)
+    local ribbon_w = floor(self.inner_w * 0.8)
+
+    local group = VerticalGroup:new{
+        align = "center",
+        text(string.format(_("%d of %d books %s"), year.finished, goal, Theme.flower), Theme.face("script_bold", 24)),
+        vspan(4),
+    }
+    if goal <= MAX_HEART_GLYPHS then
+        table.insert(group, heartRows(year.finished, goal))
+        table.insert(group, vspan(6))
+    end
+    table.insert(group, ProgressWidget:new{
+        width = ribbon_w,
+        height = px(16),
+        percentage = math.min(1, year.finished / goal),
+        radius = px(8),
+        margin_h = 0,
+        margin_v = 0,
+        bordersize = Size.border.thin,
+        bordercolor = Theme.accent,
+        bgcolor = Theme.bg,
+        fillcolor = Theme.accent,
+    })
+    table.insert(group, vspan(4))
+    table.insert(group, text(year.seconds == 0 and year.finished == 0 and _("a fresh year to bloom ❀") or status.message,
+        Theme.face("script", 18), { max_width = self.inner_w }))
+    table.insert(group, vspan(6))
+    table.insert(group, self:smallButton(_("✎ set my goal"), function() self:editGoal(goal) end))
+    table.insert(group, VerticalSpan:new{ width = gap })
+    table.insert(group, Theme.card(CenterContainer:new{
+        dimen = Geom:new{ w = cardInner(self.inner_w), h = px(30) },
+        text(string.format(_("%s · %d pages · %d days"), Data.fmtDuration(year.seconds), year.pages, year.days_read),
+            Theme.face("script", 16), { max_width = cardInner(self.inner_w) }),
+    }, { radius = px(18) }))
+    table.insert(group, VerticalSpan:new{ width = gap })
+
+    local bar_h = math.max(px(30), self.content_h - heightOf(group) - px(80))
+    table.insert(group, barChart(year.months, year.best_month, cardInner(self.inner_w),
+        math.min(bar_h, floor(self.content_h * 0.3)), self.this_month))
+    return group
+end
+
+function BlossomView:editGoal(goal)
+    UIManager:show(SpinWidget:new{
+        title_text = _("Books to read this year ♡"),
+        value = goal,
+        value_min = 1,
+        value_max = 365,
+        value_step = 1,
+        value_hold_step = 5,
+        ok_text = _("Save ♥"),
+        callback = function(spin)
+            if self.setGoal then self.setGoal(spin.value) end
+            self:refresh()
+        end,
+    })
 end
 
 -- Navigation -------------------------------------------------------------------
@@ -640,5 +827,6 @@ end
 -- Exposed for tests.
 BlossomView.PAGES = PAGES
 BlossomView.Bar = Bar
+BlossomView.Tappable = Tappable
 
 return BlossomView

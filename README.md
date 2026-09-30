@@ -1,17 +1,17 @@
-# ✿ Blossom — a cute reading diary for KOReader
+# ❀ Blossom — a cute reading diary for KOReader
 
 **Your reading statistics, but make it pretty.** Blossom turns the numbers KOReader already
 collects into a soft little diary: streaks, weekly blooms, book progress ribbons and a
 monthly shelf of covers. Designed for grayscale e-ink.
 
 ```
-        ˚ ✿ Blossom ✿ ˚
+        ˚ ❀ Blossom ❀ ˚
        My reading garden
-        · ♡ · ✿ · ♡ ·
+        · ♡ · ❀ · ♡ ·
 
    Good evening, darling ♡
  ╭────────────╮ ╭────────────╮
- │ ✿ 12       │ │ ♡ 51h 20m  │
+ │ ❀ 12       │ │ ♡ 51h 20m  │
  │ books loved│ │ of stories │
  ╰────────────╯ ╰────────────╯
         ‹   ♥   ♡   ♡   ♡   ›
@@ -19,14 +19,18 @@ monthly shelf of covers. Designed for grayscale e-ink.
 
 ## 🌸 What's inside
 
-Swipe left / right (or use the page-turn buttons) between four pages:
+Swipe left / right (or use the page-turn buttons) between five pages:
 
 | Page | What you see |
 |------|--------------|
 | **My reading garden** | A greeting, books loved, total reading time, pages turned, your day streak ♥, today, this week, your longest streak and a little affirmation |
-| **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (✿ = you read that day) and the covers of the **books that kept you company** this week |
-| **My books** | Your 6 most recent books with a progress ribbon, time spent and a ♥ when finished |
-| **This month** | Month totals and a grid of **book covers** you read that month; use ‹ › to look back at earlier months |
+| **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (❀ = you read that day) and the covers of the **books that kept you company** this week |
+| **My books** | Your 6 most recent books with a little cover, a progress ribbon, time spent and a ♥ when finished |
+| **This month** | Month totals and a grid of **book covers** you read that month, or tap **▦ calendar** for a Sunday-first calendar shaded by how long you read each day; use ‹ › to look back at earlier months |
+| **My year** | Your **yearly reading goal** (books finished): a row of hearts, a progress ribbon, whether you're ahead or behind, and minutes read per month. Tap **✎ set my goal** to change it |
+
+Tap any book (a row or a cover) to open its **book details**: a big cover, time spent together,
+pages read, reading days, pages per hour, highlights, time left and when you first and last read it.
 
 Swipe **down** or tap **✕** to close.
 
@@ -36,7 +40,7 @@ Swipe **down** or tap **✕** to close.
 2. Connect your e-reader by USB and copy it into KOReader's `plugins` folder
    (for example `koreader/plugins/` on Kindle and Kobo).
 3. Restart KOReader.
-4. Open **Tools (🔧) → ✿ Blossom reading diary**.
+4. Open **Tools (🔧) → ❀ Blossom reading diary**.
 
 Tip: bind it to a gesture in **Settings → Taps and gestures → Gesture manager**
 (action **General → Blossom reading diary**).
@@ -47,7 +51,9 @@ Tip: bind it to a gesture in **Settings → Taps and gestures → Gesture manage
   (it is by default). Blossom never changes your statistics.
 - **Covers** come from the Cover Browser cache when available, otherwise they're read
   from the book file. Books that were moved or deleted get a pretty placeholder tile instead.
-- A book counts as finished at 98% of its pages.
+- A book counts as finished at 98% of its pages. For the yearly goal, a finished book counts
+  in the year you last read it.
+- Your goal is saved in KOReader's settings (`blossom.yearly_goal`, default 12).
 
 ## 🧁 Development
 
@@ -63,6 +69,7 @@ luajit tests/test_plugin_load.lua
 
 - `blossom_data.lua` — pure calculations (streaks, weeks, months, formatting)
 - `blossom_view.lua` — the dashboard pages
+- `blossom_detail.lua` — the book detail page
 - `blossom_covers.lua` — matches statistics entries to book files and covers
 - `blossom_theme.lua` — grays, fonts and decorations
 - `main.lua` — menu, gesture action and database queries

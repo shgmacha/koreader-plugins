@@ -26,12 +26,16 @@ local function class(kind)
         for _, c in ipairs(self) do
             local s = c.getSize and c:getSize() or { w = c.width or 0, h = 0 }
             if self.kind == "VerticalGroup" then
+                self._cached_n = self._cached_n or #self
                 w, h = math.max(w, s.w), h + s.h
             else
                 w, h = w + s.w, math.max(h, s.h)
             end
         end
         return { w = w, h = h }
+    end
+    function C:resetLayout()
+        self._cached_n = nil
     end
     function C:free()
         self.freed = true
@@ -92,6 +96,11 @@ local stubs = {
                     if sql:find("count%(DISTINCT date") then return ffi.new("int64_t", db.period_days or 2) end
                 end,
                 exec = function(_, sql)
+                    if sql:find("WHERE b.id = ") then
+                        return db.book and db.book(tonumber(sql:match("WHERE b.id = (%d+)")))
+                    end
+                    if sql:find("HAVING last") then return db.year_finished end
+                    if sql:find("strftime") then return db.year_months end
                     if sql:find("GROUP BY d ORDER BY d") then
                         if db.days_error then error("days broke") end
                         return db.days
@@ -114,12 +123,20 @@ for _, name in ipairs({
     "ui/widget/imagewidget", "ui/widget/infomessage", "ui/widget/container/inputcontainer",
     "ui/widget/overlapgroup", "ui/widget/progresswidget", "ui/widget/textboxwidget",
     "ui/widget/textwidget", "ui/widget/verticalgroup", "ui/widget/verticalspan", "ui/widget/widget",
-    "ui/widget/container/widgetcontainer",
+    "ui/widget/container/widgetcontainer", "ui/widget/container/leftcontainer", "ui/widget/rectspan", "ui/widget/spinwidget",
 }) do
     stubs[name] = class(name:match("([^/]+)$"):gsub("^%l", string.upper)
         :gsub("group$", "Group"):gsub("widget$", "Widget"):gsub("span$", "Span"))
 end
 stubs["ui/widget/infomessage"].kind = "InfoMessage"
+stubs["ui/widget/spinwidget"].kind = "SpinWidget"
+
+_G.G_reader_settings = {
+    data = {},
+    readSetting = function(self, k) return self.data[k] end,
+    saveSetting = function(self, k, v) self.data[k] = v end,
+    flush = function(self) self.flushed = true end,
+}
 for name, mod in pairs(stubs) do package.preload[name] = function() return mod end end
 
 local Screen = stubs["device"].screen
@@ -142,9 +159,11 @@ end
 local today = os.date("%Y-%m-%d")
 local Data = require("blossom_data")
 
+local next_id = 100
 local function book(title, md5, secs, pages, read)
-    -- title, authors, md5, pages, read_pages, seconds, period_pages
-    return { title, "Author " .. title, md5, pages, read, secs, 10 }
+    -- id, title, authors, md5, pages, read_pages, seconds, period_pages
+    next_id = next_id + 1
+    return { next_id, title, "Author " .. title, md5, pages, read, secs, 10 }
 end
 
 local function resetDB()
@@ -152,9 +171,18 @@ local function resetDB()
     fs = { [settings_dir .. "/statistics.sqlite3"] = true, ["/books/a.epub"] = true, ["/books/b.epub"] = true }
     db.days = cols({ { Data.addDays(today, -1), 1200 }, { today, 600 } })
     db.recent = cols({
-        { "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 300, 5400 },
-        { "Atomic Habits", "James Clear", "zzz", 200, 50, 1800 },
+        { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 300, 5400 },
+        { 2, "Atomic Habits", "James Clear", "zzz", 200, 50, 1800 },
     })
+    db.book = function(id)
+        if id ~= 2 then return nil end
+        -- id, title, authors, md5, pages, read_pages, seconds, highlights, notes, first, last, days
+        return cols({ { 2, "Atomic Habits", "James Clear", "zzz", 200, 50, 1800, 4, 1,
+            os.time{ year = 2026, month = 8, day = 3, hour = 9 }, os.time{ year = 2026, month = 9, day = 29, hour = 9 }, 5 } })
+    end
+    db.year_finished = cols({ { 300, 300, os.time() }, { 200, 50, os.time() } })
+    db.year_months = cols({ { os.date("%m"), 5400, 120 } })
+    G_reader_settings.data = {}
     db.period = function()
         return cols({ book("Anathema", "md5:/books/a.epub", 3000, 300, 300), book("Lost", "nope", 600, 100, 10) })
     end
@@ -247,9 +275,9 @@ test("week page shows chart, flowers and books with covers or placeholders", fun
     local t = texts(view)
     assert(t:find("Books that kept me company"), t)
     assert(t:find("my last 14 days"), t)
-    assert(t:find("✿$") or t:find("✿ ·") or t:find("· ✿"), "flower row")
+    assert(t:find("❀$") or t:find("❀ ·") or t:find("· ❀"), "flower row")
     eq(count(view, "ImageWidget"), 1)
-    assert(t:find("✿\nLost"), "placeholder tile for unknown book")
+    assert(t:find("❀\nLost"), "placeholder tile for unknown book")
     local bars = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
     eq(bars, 7)
@@ -285,7 +313,7 @@ test("tiny screen falls back to a list instead of covers", function()
     local view = openView()
     view:goToPage(2)
     eq(count(view, "ImageWidget"), 0)
-    assert(texts(view):find("✿ Anathema · 50m"), texts(view))
+    assert(texts(view):find("❀ Anathema · 50m"), texts(view))
 end)
 
 test("books page lists progress ribbons and finished hearts", function()
@@ -338,7 +366,7 @@ test("paging wraps both ways and swipes/keys navigate or close", function()
     resetDB()
     local view = openView()
     view:onPrevPage()
-    eq(view.page, 4)
+    eq(view.page, 5)
     view:onNextPage()
     eq(view.page, 1)
     view:onSwipe(nil, { direction = "west" })
@@ -424,6 +452,179 @@ test("rows() converts column-major results", function()
     eq(Blossom.rows(nil, { "a" }), {})
     eq(Blossom.rows(cols({ { "t", 5 }, { "u", 7 } }), { "title", "n" }),
         { { title = "t", n = 5 }, { title = "u", n = 7 } })
+end)
+
+local function lastOfKind(kind)
+    for i = #shown, 1, -1 do if shown[i].kind == kind then return shown[i] end end
+end
+
+local function findTappable(view, pred)
+    local found
+    walk(view, function(n)
+        if not found and getmetatable(n) == BlossomView.Tappable and pred(texts(n)) then found = n end
+    end)
+    return found
+end
+
+test("My books rows show small covers or flower placeholders", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(3)
+    eq(count(view, "ImageWidget"), 1)
+    local tappables = 0
+    walk(view, function(n) if getmetatable(n) == BlossomView.Tappable then tappables = tappables + 1 end end)
+    eq(tappables, 2)
+end)
+
+test("tapping a book opens its detail page", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(3)
+    local row = findTappable(view, function(t) return t:find("Atomic Habits") end)
+    assert(row, "row for Atomic Habits")
+    eq(row:onTap(), true)
+    local detail = shown[#shown]
+    eq(getmetatable(detail) == require("blossom_detail"), true)
+    local t = texts(detail)
+    assert(t:find("Book details"), t)
+    assert(t:find("25%% read"), t)
+    assert(t:find("50 of 200 pages"), t)
+    assert(t:find("time together"), t)
+    assert(t:find("100 pages per hour") or t:find("100\n"), t)
+    assert(t:find("4 · 1 note"), t)
+    assert(t:find("first read 3 Aug 2026 · last read 29 Sep 2026"), t)
+    assert(t:find("1h 30m"), t) -- time left: 150 pages * 36 s
+    detail:onSwipe(nil, { direction = "south" })
+    eq(closed[#closed] == detail, true)
+    detail:onCloseWidget()
+    eq(view.cover_bbs["zzz"], false, "dashboard keeps owning covers")
+end)
+
+test("tapping a cover tile opens detail; unknown book shows a message", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(4)
+    local tile = findTappable(view, function(t) return t:find("50m") end)
+    tile:onTap() -- Anathema (id 101+) is not in db.book
+    eq(lastOfKind("InfoMessage").text, "Couldn't find this book's petals ❀")
+    view:openBook(nil)
+    eq(lastOfKind("InfoMessage").timeout, 3)
+end)
+
+test("month calendar toggle: Sunday-first grid and back to covers", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(4)
+    local toggle
+    walk(view, function(n) if n.text == "▦ calendar" then toggle = n end end)
+    toggle.callback()
+    eq(view.month_mode, "calendar")
+    local t = texts(view)
+    assert(t:find("Su\nMo\nTu"), t)
+    assert(t:find("less"), t)
+    local now = os.date("*t")
+    local days = 0
+    walk(view, function(n) if n.bordersize and n.radius == 8 and n.width and n.width == n.height then days = days + 1 end end)
+    eq(days, Data.daysInMonth(now.year, now.month))
+    local today_cell
+    walk(view, function(n) if n.color == 0 and n.radius == 8 then today_cell = n end end)
+    assert(today_cell, "today is outlined in ink")
+    -- previous month keeps calendar mode
+    view:shiftMonth(-1)
+    assert(texts(view):find("less"))
+    walk(view, function(n) if n.text == "❀ covers" then toggle = n end end)
+    toggle.callback()
+    eq(view.month_mode, "covers")
+end)
+
+test("year page: goal hearts, status, month chart", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(5)
+    local t = texts(view)
+    assert(t:find("1 of 12 books"), t)
+    assert(t:find("My year"), t)
+    assert(t:find("♥ ♡ ♡"), t)
+    assert(t:find("1h 30m · 120 pages · 2 days"), t)
+    local bars = 0
+    walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
+    eq(bars, 12)
+    eq(view.periods["year:" .. os.date("%Y")].finished, 1)
+    eq(view.periods["year:" .. os.date("%Y")].best_month, tonumber(os.date("%m")))
+end)
+
+test("setting the goal saves it and refreshes", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(5)
+    local btn
+    walk(view, function(n) if n.text == "✎ set my goal" then btn = n end end)
+    btn.callback()
+    local spin = lastOfKind("SpinWidget")
+    eq({ spin.value, spin.value_min, spin.value_max }, { 12, 1, 365 })
+    spin.callback({ value = 30 })
+    eq(G_reader_settings.data.blossom.yearly_goal, 30)
+    eq(G_reader_settings.flushed, true)
+    local t = texts(view)
+    assert(t:find("1 of 30 books"), t)
+    assert(not t:find("♥ ♡ ♡"), "no hearts above 24")
+    -- reopen: goal persisted
+    local again = openView()
+    again:goToPage(5)
+    assert(texts(again):find("1 of 30 books"))
+end)
+
+test("invalid saved goal falls back to 12", function()
+    resetDB()
+    G_reader_settings.data.blossom = { yearly_goal = "lots" }
+    local view = openView()
+    view:goToPage(5)
+    assert(texts(view):find("1 of 12 books"))
+end)
+
+test("empty year shows a fresh-year message", function()
+    resetDB()
+    fs[settings_dir .. "/statistics.sqlite3"] = nil
+    local view = openView()
+    view:goToPage(5)
+    assert(texts(view):find("0 of 12 books"))
+    assert(texts(view):find("a fresh year to bloom"))
+end)
+
+test("all pages have real color values and fresh layouts", function()
+    resetDB()
+    local view = openView()
+    local function check(root, where)
+        walk(root, function(n)
+            for _, k in ipairs({ "background", "color", "fgcolor", "bgcolor", "bordercolor", "fillcolor" }) do
+                if n[k] ~= nil then
+                    assert(type(n[k]) == "number", string.format("%s: %s.%s is a %s", where, tostring(n.kind), k, type(n[k])))
+                end
+            end
+        end)
+    end
+    for page = 1, #BlossomView.PAGES do
+        view:goToPage(page)
+        check(view, BlossomView.PAGES[page])
+        walk(view, function(n)
+            if n._cached_n then
+                assert(n._cached_n == #n, BlossomView.PAGES[page] .. ": VerticalGroup grew after its layout was cached")
+            end
+        end)
+    end
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    check(view, "calendar")
+    view:openBook(2)
+    check(shown[#shown], "detail")
+end)
+
+test("loadBook handles bad ids and missing rows", function()
+    resetDB()
+    local p = newPlugin()
+    eq(p:loadBook(nil), nil)
+    eq(p:loadBook(999), nil)
+    eq(p:loadBook(2).title, "Atomic Habits")
 end)
 
 H.done()

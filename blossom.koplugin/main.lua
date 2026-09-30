@@ -1,5 +1,5 @@
 --[[--
-Blossom ✿ a cute reading diary for KOReader.
+Blossom ❀ a cute reading diary for KOReader.
 
 Reads the built-in Statistics plugin's database (read-only) and shows an
 overview, a weekly bloom chart, recent-book progress and a monthly shelf of
@@ -29,12 +29,12 @@ local SQL_DAYS = [[
     FROM page_stat_data GROUP BY d ORDER BY d;]]
 
 local SQL_RECENT = [[
-    SELECT title, authors, md5, pages, total_read_pages, total_read_time
+    SELECT id, title, authors, md5, pages, total_read_pages, total_read_time
     FROM book WHERE total_read_time > 0
     ORDER BY last_open DESC LIMIT %d;]]
 
 local SQL_PERIOD_BOOKS = [[
-    SELECT b.title, b.authors, b.md5, b.pages, b.total_read_pages,
+    SELECT b.id, b.title, b.authors, b.md5, b.pages, b.total_read_pages,
            sum(p.duration), count(DISTINCT p.page)
     FROM page_stat_data p JOIN book b ON b.id = p.id_book
     WHERE p.start_time >= %d AND p.start_time < %d
@@ -43,6 +43,26 @@ local SQL_PERIOD_BOOKS = [[
 local SQL_PERIOD_DAYS = [[
     SELECT count(DISTINCT date(start_time, 'unixepoch', 'localtime'))
     FROM page_stat_data WHERE start_time >= %d AND start_time < %d;]]
+
+local SQL_BOOK = [[
+    SELECT b.id, b.title, b.authors, b.md5, b.pages, b.total_read_pages, b.total_read_time,
+           b.highlights, b.notes, min(p.start_time), max(p.start_time),
+           count(DISTINCT date(p.start_time, 'unixepoch', 'localtime'))
+    FROM book b LEFT JOIN page_stat_data p ON p.id_book = b.id
+    WHERE b.id = %d GROUP BY b.id;]]
+
+-- Books whose last reading session falls in the year; "finished" is decided in Lua.
+local SQL_YEAR_FINISHED = [[
+    SELECT b.pages, b.total_read_pages, max(p.start_time) AS last
+    FROM book b JOIN page_stat_data p ON p.id_book = b.id
+    GROUP BY b.id HAVING last >= %d AND last < %d;]]
+
+local SQL_YEAR_MONTHS = [[
+    SELECT strftime('%%m', start_time, 'unixepoch', 'localtime') AS m,
+           sum(duration), count(DISTINCT id_book || '-' || page)
+    FROM page_stat_data WHERE start_time >= %d AND start_time < %d GROUP BY m;]]
+
+local SETTINGS_KEY = "blossom"
 
 local Blossom = WidgetContainer:extend{
     name = "blossom",
@@ -66,7 +86,7 @@ end
 
 function Blossom:addToMainMenu(menu_items)
     menu_items.blossom = {
-        text = _("✿ Blossom reading diary"),
+        text = _("❀ Blossom reading diary"),
         sorting_hint = "tools",
         callback = function() self:show() end,
     }
@@ -139,7 +159,7 @@ function Blossom:loadRaw()
         end)
         raw.books = try(conn, function(c)
             return rows(c:exec(string.format(SQL_RECENT, RECENT_BOOKS)),
-                { "title", "authors", "md5", "pages", "read_pages", "seconds" })
+                { "id", "title", "authors", "md5", "pages", "read_pages", "seconds" })
         end)
         return raw
     end)
@@ -148,11 +168,49 @@ end
 function Blossom:loadPeriod(start_time, end_time)
     local result = self:withDB(function(conn)
         local list = rows(conn:exec(string.format(SQL_PERIOD_BOOKS, start_time, end_time)),
-            { "title", "authors", "md5", "pages", "read_pages", "seconds", "period_pages" })
+            { "id", "title", "authors", "md5", "pages", "read_pages", "seconds", "period_pages" })
         local days = conn:rowexec(string.format(SQL_PERIOD_DAYS, start_time, end_time))
         return { list = list, days = tonumber(days) }
     end) or {}
     return Data.summarizePeriod(result.list, result.days)
+end
+
+function Blossom:loadBook(id)
+    id = tonumber(id)
+    if not id then return end
+    local row = self:withDB(function(conn)
+        return rows(conn:exec(string.format(SQL_BOOK, id)), { "id", "title", "authors", "md5", "pages",
+            "read_pages", "seconds", "highlights", "notes", "first", "last", "days" })[1]
+    end)
+    return row and Data.bookDetail(row)
+end
+
+function Blossom:loadYear(y)
+    local start_time, end_time = Data.yearBounds(y)
+    local raw = self:withDB(function(conn)
+        return {
+            finished_rows = rows(conn:exec(string.format(SQL_YEAR_FINISHED, start_time, end_time)),
+                { "pages", "read_pages", "last" }),
+            months = rows(conn:exec(string.format(SQL_YEAR_MONTHS, start_time, end_time)),
+                { "month", "seconds", "pages" }),
+            days = tonumber(conn:rowexec(string.format(SQL_PERIOD_DAYS, start_time, end_time))),
+        }
+    end)
+    return Data.summarizeYear(y, raw)
+end
+
+-- Settings -------------------------------------------------------------------
+
+function Blossom:getGoal()
+    local settings = G_reader_settings:readSetting(SETTINGS_KEY) or {}
+    return Data.validGoal(settings.yearly_goal)
+end
+
+function Blossom:setGoal(goal)
+    local settings = G_reader_settings:readSetting(SETTINGS_KEY) or {}
+    settings.yearly_goal = Data.validGoal(goal)
+    G_reader_settings:saveSetting(SETTINGS_KEY, settings)
+    G_reader_settings:flush()
 end
 
 -- UI -------------------------------------------------------------------------
@@ -173,6 +231,10 @@ function Blossom:show()
         loadMonth = function(y, m)
             return self:loadPeriod(Data.monthBounds(y, m))
         end,
+        loadYear = function(y) return self:loadYear(y) end,
+        loadBook = function(id) return self:loadBook(id) end,
+        getGoal = function() return self:getGoal() end,
+        setGoal = function(goal) self:setGoal(goal) end,
     }, "flashui")
 end
 

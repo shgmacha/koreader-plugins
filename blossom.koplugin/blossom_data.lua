@@ -6,15 +6,17 @@ with plain LuaJIT. Dates are local "YYYY-MM-DD" strings.
 local Data = {}
 
 Data.FINISHED_AT = 0.98
+Data.DEFAULT_GOAL = 12
+Data.MONTH_LETTERS = { "J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D" }
 Data.WEEKDAYS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
 
 Data.AFFIRMATIONS = {
-    "Every page is a petal ✿",
+    "Every page is a petal ❀",
     "Reading is self-care ♡",
     "One more chapter, darling ☆",
     "Your little library is blooming ❀",
     "Soft hours, happy pages ♡",
-    "Cozy reader energy ✿",
+    "Cozy reader energy ❀",
     "Stories look good on you ☆",
 }
 
@@ -81,6 +83,31 @@ function Data.shiftMonth(y, m, delta)
     return math.floor(idx / 12), idx % 12 + 1
 end
 
+function Data.yearBounds(y)
+    return os.time{ year = y, month = 1, day = 1, hour = 0 },
+           os.time{ year = y + 1, month = 1, day = 1, hour = 0 }
+end
+
+function Data.daysInYear(y)
+    return ((y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0) and 366 or 365
+end
+
+function Data.daysInMonth(y, m)
+    return tonumber(os.date("%d", os.time{ year = y, month = m + 1, day = 0, hour = 12 }))
+end
+
+function Data.dayOfYear(s)
+    return tonumber(os.date("%j", noon(s)))
+end
+
+--- "3 Aug 2026" from an epoch, nil for nil.
+function Data.fmtDate(epoch)
+    epoch = tonumber(epoch)
+    if not epoch or epoch <= 0 then return end
+    local out = os.date("%d %b %Y", epoch):gsub("^0", "")
+    return out
+end
+
 function Data.monthTitle(y, m)
     return os.date("%B %Y", os.time{ year = y, month = m, day = 1, hour = 12 })
 end
@@ -126,6 +153,7 @@ local function book(row)
     return {
         title = (row.title and row.title ~= "") and row.title or "Untitled",
         authors = row.authors or "",
+        id = tonumber(row.id),
         md5 = row.md5,
         seconds = tonumber(row.seconds) or 0,
         pages = tonumber(row.period_pages) or 0,
@@ -154,6 +182,7 @@ function Data.summarize(raw, today)
         flowers = {},
         recent = {},
     }
+    stats.by_date = by_date
     stats.streak, stats.longest_streak = Data.streaks(days, today)
 
     local week_seconds, best = 0, 0
@@ -193,6 +222,119 @@ function Data.summarizePeriod(rows, days_read)
     end)
     period.books = #period.list
     return period
+end
+
+-- Calendar ---------------------------------------------------------------------
+
+--- Shade level for a day: 0 none, 1 under 15 min, 2 under 45 min, 3 more.
+function Data.level(seconds)
+    seconds = tonumber(seconds) or 0
+    if seconds <= 0 then return 0 end
+    if seconds < 15 * 60 then return 1 end
+    if seconds < 45 * 60 then return 2 end
+    return 3
+end
+
+--- Sunday-first month grid; `false` cells pad the first and last weeks.
+function Data.calendar(y, m, by_date, today)
+    by_date = by_date or {}
+    local cells = {}
+    local first_wday = os.date("*t", os.time{ year = y, month = m, day = 1, hour = 12 }).wday
+    for _ = 1, first_wday - 1 do cells[#cells + 1] = false end
+    for d = 1, Data.daysInMonth(y, m) do
+        local date = string.format("%04d-%02d-%02d", y, m, d)
+        local seconds = by_date[date] or 0
+        cells[#cells + 1] = {
+            day = d,
+            date = date,
+            seconds = seconds,
+            level = Data.level(seconds),
+            today = date == today,
+            future = today ~= nil and date > today,
+        }
+    end
+    while #cells % 7 ~= 0 do cells[#cells + 1] = false end
+    return { headers = Data.WEEKDAYS, cells = cells, rows = #cells / 7 }
+end
+
+-- Yearly goal ----------------------------------------------------------------
+
+function Data.validGoal(goal)
+    goal = tonumber(goal)
+    if not goal or goal < 1 then return Data.DEFAULT_GOAL end
+    return math.floor(math.min(goal, 365))
+end
+
+local function books(n)
+    return n == 1 and "1 book" or string.format("%d books", n)
+end
+
+--- Compares finished books with where an even pace would be today.
+function Data.goalStatus(finished, goal, today)
+    goal = Data.validGoal(goal)
+    finished = tonumber(finished) or 0
+    local y = Data.parseDate(today)
+    local expected = goal * Data.dayOfYear(today) / Data.daysInYear(y)
+    local diff = finished - expected
+    local message
+    if finished >= goal then
+        message = "Goal reached! ♥"
+    elseif diff >= 1 then
+        message = books(math.floor(diff)) .. " ahead ♡"
+    elseif diff > -1 then
+        message = "right on track ❀"
+    else
+        message = books(math.floor(-diff)) .. " behind — you've got this ☆"
+    end
+    return { goal = goal, finished = finished, expected = expected, diff = diff, message = message }
+end
+
+--- raw = { finished_rows = {{pages, read_pages}}, months = {{month = "09", seconds, pages}}, days = n }
+function Data.summarizeYear(y, raw)
+    raw = raw or {}
+    local year = { year = y, finished = 0, seconds = 0, pages = 0, days_read = tonumber(raw.days) or 0, months = {} }
+    for _, row in ipairs(raw.finished_rows or {}) do
+        if Data.progress(row.read_pages, row.pages) >= Data.FINISHED_AT then
+            year.finished = year.finished + 1
+        end
+    end
+    for i = 1, 12 do year.months[i] = { label = Data.MONTH_LETTERS[i], seconds = 0 } end
+    for _, row in ipairs(raw.months or {}) do
+        local month = year.months[tonumber(row.month)]
+        if month then
+            month.seconds = month.seconds + (tonumber(row.seconds) or 0)
+            year.seconds = year.seconds + (tonumber(row.seconds) or 0)
+            year.pages = year.pages + (tonumber(row.pages) or 0)
+        end
+    end
+    local best = 0
+    for i, month in ipairs(year.months) do
+        if month.seconds > best then best, year.best_month = month.seconds, i end
+    end
+    return year
+end
+
+-- Book detail ------------------------------------------------------------------
+
+function Data.bookDetail(row)
+    local b = book(row)
+    local seconds = b.seconds
+    local read = tonumber(row.read_pages) or 0
+    local total = tonumber(row.pages) or 0
+    b.read_pages = read
+    b.total_pages = total
+    b.highlights = tonumber(row.highlights) or 0
+    b.notes = tonumber(row.notes) or 0
+    b.days = tonumber(row.days) or 0
+    b.first = Data.fmtDate(row.first)
+    b.last = Data.fmtDate(row.last)
+    if seconds >= 60 and read > 0 then
+        b.speed = math.floor(read / (seconds / 3600) + 0.5)
+    end
+    if not b.finished and read > 0 and total > read and seconds > 0 then
+        b.time_left = math.floor((total - read) * seconds / read)
+    end
+    return b
 end
 
 return Data

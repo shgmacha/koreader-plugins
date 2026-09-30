@@ -124,4 +124,101 @@ test("affirmation is deterministic per day", function()
     assert(type(Data.affirmation("2026-01-01")) == "string")
 end)
 
+test("summarize exposes by_date and passes ids through", function()
+    local s = Data.summarize({
+        days = { { date = "2026-09-30", seconds = 60 }, { date = "2026-09-30", seconds = 40 } },
+        books = { { id = 7, title = "T", pages = 10, read_pages = 1, seconds = 5 } },
+    }, "2026-09-30")
+    eq(s.by_date, { ["2026-09-30"] = 100 })
+    eq(s.recent[1].id, 7)
+end)
+
+test("level boundaries", function()
+    eq({ Data.level(nil), Data.level(0), Data.level(1), Data.level(899), Data.level(900),
+         Data.level(2699), Data.level(2700) }, { 0, 0, 1, 1, 2, 2, 3 })
+end)
+
+test("calendar is Sunday-first and padded to whole weeks", function()
+    -- May 2026 starts on a Friday: 5 blanks + 31 days -> 6 rows.
+    local cal = Data.calendar(2026, 5, { ["2026-05-02"] = 1200, ["2026-05-31"] = 5000 }, "2026-05-15")
+    eq(cal.headers[1], "Su")
+    eq(cal.rows, 6)
+    eq(#cal.cells, 42)
+    for i = 1, 5 do eq(cal.cells[i], false) end
+    eq(cal.cells[6].day, 1)
+    eq(cal.cells[7].level, 2)
+    eq(cal.cells[20].today, true)
+    eq(cal.cells[36].day, 31)
+    eq(cal.cells[36].level, 3)
+    eq(cal.cells[36].future, true)
+    eq(cal.cells[37], false)
+    -- Feb 2026 starts on Sunday, 28 days -> exactly 4 rows, no padding.
+    cal = Data.calendar(2026, 2, nil, "2026-09-30")
+    eq({ cal.rows, cal.cells[1].day, cal.cells[28].day }, { 4, 1, 28 })
+    -- Leap February.
+    local days = 0
+    for _, c in ipairs(Data.calendar(2028, 2, {}, nil).cells) do if c then days = days + 1 end end
+    eq(days, 29)
+    eq(Data.daysInMonth(2028, 2), 29)
+    eq(Data.daysInMonth(2026, 2), 28)
+    eq(Data.daysInMonth(2026, 12), 31)
+end)
+
+test("year helpers", function()
+    eq(Data.daysInYear(2026), 365)
+    eq(Data.daysInYear(2028), 366)
+    eq(Data.daysInYear(2100), 365)
+    eq(Data.daysInYear(2000), 366)
+    eq(Data.dayOfYear("2026-01-01"), 1)
+    eq(Data.dayOfYear("2028-12-31"), 366)
+    local s, e = Data.yearBounds(2026)
+    eq(os.date("%Y-%m-%d %H:%M", s), "2026-01-01 00:00")
+    eq(os.date("%Y-%m-%d %H:%M", e), "2027-01-01 00:00")
+    eq(Data.fmtDate(nil), nil)
+    eq(Data.fmtDate(0), nil)
+    eq(Data.fmtDate(os.time{ year = 2026, month = 8, day = 3, hour = 12 }), "3 Aug 2026")
+end)
+
+test("goal validation", function()
+    eq({ Data.validGoal(nil), Data.validGoal(0), Data.validGoal("x"), Data.validGoal("20"),
+         Data.validGoal(7.9), Data.validGoal(9999) }, { 12, 12, 12, 20, 7, 365 })
+end)
+
+test("goal status: ahead, on track, behind, reached", function()
+    -- 2026-07-02 is day 183 of 365 -> expected ~6.02 of 12
+    eq(Data.goalStatus(8, 12, "2026-07-02").message, "1 book ahead ♡")
+    eq(Data.goalStatus(10, 12, "2026-07-02").message, "3 books ahead ♡")
+    eq(Data.goalStatus(6, 12, "2026-07-02").message, "right on track ❀")
+    eq(Data.goalStatus(5, 12, "2026-07-02").message, "1 book behind — you've got this ☆")
+    eq(Data.goalStatus(0, 24, "2026-07-02").message, "12 books behind — you've got this ☆")
+    eq(Data.goalStatus(12, 12, "2026-03-01").message, "Goal reached! ♥")
+    local st = Data.goalStatus(nil, nil, "2026-01-01")
+    eq({ st.goal, st.finished, st.message }, { 12, 0, "right on track ❀" })
+end)
+
+test("summarizeYear counts finished books and buckets months", function()
+    local y = Data.summarizeYear(2026, {
+        finished_rows = { { pages = 100, read_pages = 99 }, { pages = 100, read_pages = 50 }, { pages = nil, read_pages = 5 } },
+        months = { { month = "03", seconds = 600, pages = 10 }, { month = "09", seconds = 7200, pages = 90 }, { month = "13", seconds = 1 } },
+        days = 21,
+    })
+    eq({ y.finished, y.seconds, y.pages, y.days_read, y.best_month }, { 1, 7800, 100, 21, 9 })
+    eq(#y.months, 12)
+    eq(y.months[3], { label = "M", seconds = 600 })
+    local empty = Data.summarizeYear(2026, nil)
+    eq({ empty.finished, empty.seconds, empty.best_month }, { 0, 0, nil })
+end)
+
+test("bookDetail speed, time left and missing data", function()
+    local d = Data.bookDetail{ id = 3, title = "Dune", pages = 400, read_pages = 100, seconds = 7200,
+        highlights = 4, notes = 1, days = 5, first = os.time{ year = 2026, month = 8, day = 3, hour = 9 },
+        last = os.time{ year = 2026, month = 9, day = 29, hour = 21 } }
+    eq({ d.id, d.speed, d.time_left, d.highlights, d.days, d.first, d.last, d.total_pages },
+       { 3, 50, 21600, 4, 5, "3 Aug 2026", "29 Sep 2026", 400 })
+    local fin = Data.bookDetail{ title = "F", pages = 100, read_pages = 100, seconds = 3600 }
+    eq({ fin.finished, fin.time_left, fin.speed }, { true, nil, 100 })
+    local blank = Data.bookDetail{}
+    eq({ blank.title, blank.speed, blank.time_left, blank.first, blank.highlights }, { "Untitled", nil, nil, nil, 0 })
+end)
+
 H.done()
