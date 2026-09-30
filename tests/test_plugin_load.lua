@@ -365,7 +365,7 @@ test("books page is an edge-to-edge cover gallery with % and hours", function()
     assert(t:find("Atomic Habits\n25%% · 30m"), t)
     eq(count(view, "ProgressWidget"), 0)
     local tiles = 0
-    walk(view, function(n) if n.kind == "Framecontainer" and n.padding == 0 and n.color == 0xDD and n.bordersize == 1 then tiles = tiles + 1 end end)
+    walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 2)
 end)
 
@@ -377,7 +377,7 @@ test("books gallery shows at most 6 covers", function()
     local view = openView()
     view:goToPage(3)
     local tiles = 0
-    walk(view, function(n) if n.kind == "Framecontainer" and n.padding == 0 and n.color == 0xDD and n.bordersize == 1 then tiles = tiles + 1 end end)
+    walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 6)
 end)
 
@@ -859,6 +859,29 @@ test("goal bar clamps its fill and keeps the bow inside", function()
     eq(empty[2].overlap_offset[1], 0)
     local half = view:goalBar(0.5, 400)
     eq(half[2].overlap_offset[1], 200 - 19)
+end)
+
+test("rounded frame paints content, trims corners, then the border", function()
+    local calls = {}
+    local bb = setmetatable({}, { __index = function(_, k)
+        return function(_, ...) table.insert(calls, { k, ... }) end
+    end })
+    local content = { getSize = function() return { w = 98, h = 148 } end,
+                      paintTo = function(_, _, x, y) table.insert(calls, { "content", x, y }) end }
+    local frame = BlossomView.RoundedFrame:new{ radius = 10, bordersize = 1, color = 0x77, background = 0xFF, outside = 0xFF, content }
+    eq(frame:getSize(), { w = 100, h = 150 })
+    frame:paintTo(bb, 5, 7)
+    eq(calls[1][1], "paintRoundedRect")
+    eq({ calls[2][1], calls[2][2], calls[2][3] }, { "content", 6, 8 })
+    eq(calls[#calls][1], "paintBorder")
+    local trims = 0
+    for i = 3, #calls - 1 do
+        eq(calls[i][1], "paintRect")
+        trims = trims + 1
+    end
+    assert(trims > 0 and trims % 4 == 0, "four corners trimmed row by row")
+    -- top-left first row cut is the widest, and stays inside the radius
+    assert(calls[3][4] >= 1 and calls[3][4] <= 10)
 end)
 
 H.done()

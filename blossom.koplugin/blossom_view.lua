@@ -29,6 +29,7 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Widget = require("ui/widget/widget")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Screen = Device.screen
 local _ = require("gettext")
 
@@ -96,6 +97,41 @@ function GoalBar:paintTo(bb, x, y)
         bb:paintRoundedRect(x, y, fill, self.height, Theme.bar, r)
     end
     bb:paintBorder(x, y, self.width, self.height, Size.border.thin, Theme.accent, r)
+end
+
+--- A rounded frame whose content may touch its edges (like a cover flush at the top):
+--- content is painted first, the corners are trimmed to the curve, then the border.
+local RoundedFrame = WidgetContainer:extend{
+    radius = 10,
+    bordersize = 1,
+    color = nil,      -- border color
+    background = nil, -- inside the frame
+    outside = nil,    -- page color used to trim the corners
+}
+
+function RoundedFrame:getSize()
+    local size = self[1]:getSize()
+    return Geom:new{ w = size.w + 2 * self.bordersize, h = size.h + 2 * self.bordersize }
+end
+
+function RoundedFrame:paintTo(bb, x, y)
+    local size = self:getSize()
+    local w, h, r, b = size.w, size.h, self.radius, self.bordersize
+    self.dimen = Geom:new{ x = x, y = y, w = w, h = h }
+    bb:paintRoundedRect(x, y, w, h, self.background, r)
+    self[1]:paintTo(bb, x + b, y + b)
+    -- Trim whatever the content painted outside the rounded corners.
+    for dy = 0, r - 1 do
+        local yy = r - dy - 0.5
+        local cut = math.ceil(r - math.sqrt(math.max(0, r * r - yy * yy)) - 0.5)
+        if cut > 0 then
+            bb:paintRect(x, y + dy, cut, 1, self.outside)
+            bb:paintRect(x + w - cut, y + dy, cut, 1, self.outside)
+            bb:paintRect(x, y + h - 1 - dy, cut, 1, self.outside)
+            bb:paintRect(x + w - cut, y + h - 1 - dy, cut, 1, self.outside)
+        end
+    end
+    bb:paintBorder(x, y, w, h, b, self.color, r)
 end
 
 --- Makes any widget tappable.
@@ -549,21 +585,26 @@ end
 
 local BOOK_COLS, BOOK_ROWS = 3, 2
 
---- Gallery tile: the cover edge to edge (thin outline), title and progress below.
+--- Gallery tile: one rounded frame holding the cover edge to edge, then title and progress.
 function BlossomView:galleryTile(b, w, cover_h)
+    local border = Size.border.thin
+    local inner = w - 2 * border
+    local pad = px(6)
     local prefix = not b.finished and string.format("%d%% · ", floor(b.progress * 100 + 0.5)) or nil
-    return self:tappable(VerticalGroup:new{
-        align = "center",
-        FrameContainer:new{
-            bordersize = Size.border.thin,
-            color = Theme.petal,
-            padding = 0,
-            margin = 0,
-            self:art(b, w - 2 * Size.border.thin, cover_h, true, true),
+    return self:tappable(RoundedFrame:new{
+        radius = px(10),
+        bordersize = border,
+        color = Theme.accent,
+        background = Theme.bg,
+        outside = Theme.bg,
+        VerticalGroup:new{
+            align = "center",
+            self:art(b, inner, cover_h, true, true),
+            vspan(6),
+            text(b.title, Theme.face("bold", 14), { max_width = inner - 2 * pad }),
+            self:timeCaption(b, Theme.face("script", 15), inner - 2 * pad, prefix),
+            vspan(7),
         },
-        vspan(6),
-        text(b.title, Theme.face("bold", 14), { max_width = w }),
-        self:timeCaption(b, Theme.face("script", 15), w, prefix),
     }, b)
 end
 
@@ -575,7 +616,7 @@ function BlossomView:build_books()
     end
     local gap_x, gap_y = px(16), px(18)
     local tile_w = floor((self.inner_w - gap_x * (BOOK_COLS - 1)) / BOOK_COLS)
-    local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(6)
+    local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
     local row_h = floor((self.content_h - gap_y * (BOOK_ROWS - 1)) / BOOK_ROWS)
     local cover_h = math.min(floor(tile_w * COVER_RATIO), row_h - caption_h - 2 * Size.border.thin)
     local group = VerticalGroup:new{ align = "center" }
@@ -931,5 +972,6 @@ BlossomView.PAGES = PAGES
 BlossomView.Bar = Bar
 BlossomView.Tappable = Tappable
 BlossomView.GoalBar = GoalBar
+BlossomView.RoundedFrame = RoundedFrame
 
 return BlossomView
