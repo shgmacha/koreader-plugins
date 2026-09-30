@@ -79,21 +79,28 @@ function BlossomMore:bookmarkRow(b)
     }
 end
 
-function BlossomMore:quoteRow(h)
+function BlossomMore:quoteRow(h, max_lines)
     local meta = { h.title }
     if h.page then meta[#meta + 1] = string.format(_("p. %d"), h.page) end
     meta[#meta + 1] = h.date
-    return Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 4, 15)
+    return Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, max_lines, 15)
 end
 
-function BlossomMore:makeRow(item)
-    return (self.kind == "highlights" or item.kind == "highlight") and self:quoteRow(item) or self:bookmarkRow(item)
+--- A row: the whole highlight, unless it's taller than a page, when it's cut to fit.
+function BlossomMore:makeRow(item, avail_h)
+    if not (self.kind == "highlights" or item.kind == "highlight") then return self:bookmarkRow(item) end
+    local row = self:quoteRow(item)
+    if avail_h and row:getSize().h > avail_h then
+        row:free()
+        row = self:quoteRow(item, math.max(2, math.floor((avail_h - px(70)) / (15 * 1.45))))
+    end
+    return row
 end
 
 --- One list page; all page breaks are worked out the first time, so the pager knows the count.
 function BlossomMore:listPage(avail_h)
     local gap = px(self.kind == "highlights" and 16 or 12)
-    local make_row = function(item) return self:makeRow(item) end
+    local make_row = function(item) return self:makeRow(item, avail_h) end
     if not self.list_starts_done then
         self.starts = Theme.pageStarts(self.items, avail_h, make_row, gap)
         self.list_starts_done = true

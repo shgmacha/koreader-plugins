@@ -175,7 +175,7 @@ function Theme.wave(ratio, width)
 end
 
 --- A highlight with a soft bar on its left: the text as in the book, a small gray `meta` line, then the note.
---- Short quotes take their natural height; long ones stop at `max_lines` with an ellipsis.
+--- The whole text by default; pass `max_lines` to cut a very long one short (with an ellipsis).
 function Theme.quote(quote_text, meta, note, width, max_lines, size)
     local TextBoxWidget = require("ui/widget/textboxwidget")
     size = size or 17
@@ -193,9 +193,10 @@ function Theme.quote(quote_text, meta, note, width, max_lines, size)
             bgcolor = Theme.bg,
         }
     end
+    -- The whole highlight; only when max_lines is given is it cut there (with an ellipsis).
     local quote = box()
-    local max_h = math.floor((max_lines or 4) * face.size * 1.45)
-    if quote:getSize().h > max_h then
+    local max_h = max_lines and math.floor(max_lines * face.size * 1.45)
+    if max_h and quote:getSize().h > max_h then
         quote:free()
         quote = box(max_h)
     end

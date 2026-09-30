@@ -55,6 +55,9 @@ QUOTES = {
     "where-the-peonies-grow": [
         ("07:15:30", "underscore", "Every bloom is a small, brave decision to begin again.", "", 176, "Part One"),
         ("2026-09-26 07:40:00", "lighten", "The shop smelled of rain and possibility.", "", 64, "Part One"),
+        ("2026-09-28 21:10:00", "lighten", "Her grandmother used to say that a garden is a letter you write to the future: "
+         "you plant it without knowing who will read it, and you trust that someone, one soft morning, will kneel "
+         "down in the dirt and understand every word.", "the whole book in one sentence ♡", 142, "Part Two"),
     ],
     "the-lavender-letters": [
         ("2026-09-14 22:05:00", "lighten", "Some summers are only ever meant to be remembered.", "sigh", 44, "Summer One"),

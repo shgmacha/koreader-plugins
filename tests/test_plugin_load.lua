@@ -1641,4 +1641,21 @@ test("My books and its shelf only keep books read for over an hour", function()
     assert(texts(empty):find("over an hour"), texts(empty))
 end)
 
+test("highlights lists show the whole highlight, not a cut-off one", function()
+    resetDB()
+    local long = string.rep("A long and lovely sentence that goes on. ", 12)
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = {
+        { datetime = "2026-09-03 10:00:00", drawer = "lighten", text = long, pageno = 9 },
+    } } }
+    local view = openView()
+    for _, key in ipairs({ "highlights", "bookmarks" }) do
+        view:openMore(key)
+        local box
+        walk(shown[#shown], function(n) if n.kind == "TextboxWidget" and n.text and n.text:find("^A long") then box = n end end)
+        assert(box, key)
+        eq(box.text, long:gsub("%s+$", "")) -- every word
+        eq(box.height, nil)                  -- no height cap, no ellipsis
+    end
+end)
+
 H.done()

@@ -158,7 +158,7 @@ function BlossomDetail:build()
             if h.chapter then meta[#meta + 1] = h.chapter end
             meta[#meta + 1] = h.date
             if i > 1 then table.insert(content, vspan(18)) end
-            table.insert(content, Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 6))
+            table.insert(content, Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w))
         end
     end
     table.insert(content, vspan(16))

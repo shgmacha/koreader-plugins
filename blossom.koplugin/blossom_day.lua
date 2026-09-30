@@ -147,7 +147,12 @@ function BlossomDay:build()
     else
         local avail = room() - px(50)
         local make_row = function(item, _idx, prev)
-            local row = item.section == "highlights" and self:quote(item.note, 4) or self:bookmarkRow(item.note)
+            local row = item.section == "highlights" and self:quote(item.note) or self:bookmarkRow(item.note)
+            if item.section == "highlights" and row:getSize().h > avail - px(40) then
+                -- a highlight taller than the page: cut to fit
+                row:free()
+                row = self:quote(item.note, math.max(2, floor((avail - px(110)) / (17 * 1.45))))
+            end
             if prev and prev.section == item.section then return row end
             return VerticalGroup:new{
                 align = "center",
