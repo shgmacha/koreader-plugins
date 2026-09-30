@@ -607,7 +607,9 @@ test("year page: goal hearts, status, month chart", function()
     eq(gb.ratio, 1 / 12)
     assert(not t:find("♥  ♡"), "no heart row")
     assert(t:find("1h 30m\nread\n120\npages\n2\ndays"), t)
-    assert(t:find(" of 12 books\n✎"), t) -- pencil right after the goal
+    local pencil
+    walk(view, function(n) if n.file and n.file:find("icons/pencil.svg$") then pencil = n end end)
+    assert(pencil, "pencil icon beside the goal")
     local bars = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
     eq(bars, 12)
@@ -619,9 +621,13 @@ test("setting the goal saves it and refreshes", function()
     resetDB()
     local view = openView()
     view:goToPage(5)
-    local btn
-    walk(view, function(n) if n.text == "✎" then btn = n end end)
-    btn.callback()
+    local btn = findTappable(view, function() return false end)
+    walk(view, function(n)
+        if getmetatable(n) == BlossomView.Tappable then
+            walk(n, function(c) if c.file and c.file:find("icons/pencil.svg$") then btn = n end end)
+        end
+    end)
+    btn:onTap()
     local spin = lastOfKind("SpinWidget")
     eq({ spin.value, spin.value_min, spin.value_max }, { 12, 1, 365 })
     spin.callback({ value = 30 })
@@ -887,6 +893,35 @@ test("rounded frame paints content, trims corners, then the border", function()
     assert(trims > 0 and trims % 4 == 0, "four corners trimmed row by row")
     -- top-left first row cut is the widest, and stays inside the radius
     assert(calls[3][4] >= 1 and calls[3][4] <= 10)
+end)
+
+test("detail cover fills a rounded frame", function()
+    resetDB()
+    db.book = function()
+        return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 300, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
+    end
+    local view = openView()
+    view:openBook(1)
+    local detail = shown[#shown]
+    local frame
+    walk(detail, function(n) if getmetatable(n) == BlossomView.RoundedFrame then frame = n end end)
+    assert(frame, "rounded cover frame")
+    local img
+    walk(frame, function(n) if n.kind == "ImageWidget" and n.image then img = n end end)
+    assert(img and img.image.blits and #img.image.blits == 1, "cover cropped to fill")
+    -- frame shaped like the 300x450 cover: nothing cropped
+    eq(img.height, math.floor(img.width * 1.5))
+    local blit = img.image.blits[1]
+    assert(blit[3] <= 1 and blit[4] <= 1, "no trimming for a matching frame")
+end)
+
+test("year cards use gentler corners", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(5)
+    local radii = {}
+    walk(view, function(n) if n.kind == "Framecontainer" and n.bordersize == 0 and n.radius then radii[#radii + 1] = n.radius end end)
+    eq(radii, { 10, 10 })
 end)
 
 H.done()

@@ -30,7 +30,8 @@ local text, vspan, cardInner = Theme.text, Theme.vspan, Theme.cardInner
 
 local BlossomDetail = InputContainer:extend{
     book = nil, -- Data.bookDetail result
-    art = nil,  -- function(book, w, h) -> cover widget
+    art = nil,     -- function(book, w, h, fill) -> cover widget
+    aspect = nil,  -- function(book) -> cover height / width, or nil without a cover
     covers_fullscreen = true,
 }
 
@@ -72,8 +73,12 @@ function BlossomDetail:build()
     local header = Theme.header(_("Book details"), self.width, function() self:onClose() end, self)
 
     -- Cover beside title, author and progress.
+    -- Shape the frame like the cover itself, so filling it crops nothing.
+    local ratio = (self.aspect and self.aspect(b)) or 1.45
     local cover_w = floor(self.inner_w * 0.36)
-    local cover_h = math.min(floor(cover_w * 1.45), floor(self.height * 0.32))
+    local max_h = floor(self.height * 0.32)
+    if floor(cover_w * ratio) > max_h then cover_w = floor(max_h / ratio) end
+    local cover_h = floor((cover_w - 2 * Size.border.thin) * ratio)
     local info_w = self.inner_w - cover_w - gap
     local pct = floor(b.progress * 100 + 0.5)
     local info = VerticalGroup:new{
@@ -105,14 +110,14 @@ function BlossomDetail:build()
         text(b.total_pages > 0 and string.format(_("%d of %d pages"), math.min(b.read_pages, b.total_pages), b.total_pages) or " ",
             Theme.face("ui", 14), { color = Theme.soft_ink, max_width = info_w }),
     }
-    local polaroid = FrameContainer:new{
+    -- The cover fills its rounded frame edge to edge.
+    local polaroid = Theme.RoundedFrame:new{
+        radius = px(10),
         bordersize = Size.border.thin,
         color = Theme.accent,
-        radius = px(8),
         background = Theme.bg,
-        padding = px(4),
-        margin = 0,
-        self.art(b, cover_w - 2 * (px(4) + Size.border.thin), cover_h),
+        outside = Theme.bg,
+        self.art(b, cover_w - 2 * Size.border.thin, cover_h, true),
     }
     local top = HorizontalGroup:new{
         align = "top",

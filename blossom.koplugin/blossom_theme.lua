@@ -18,6 +18,7 @@ local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
 
 local Theme = {
     bg = Blitbuffer.COLOR_WHITE,
@@ -76,6 +77,41 @@ function Theme.card(widget, opts)
     }
 end
 
+--- A rounded frame whose content may touch its edges (like a cover flush at the top):
+--- content is painted first, the corners are trimmed to the curve, then the border.
+Theme.RoundedFrame = WidgetContainer:extend{
+    radius = 10,
+    bordersize = 1,
+    color = nil,      -- border color
+    background = nil, -- inside the frame
+    outside = nil,    -- page color used to trim the corners
+}
+
+function Theme.RoundedFrame:getSize()
+    local size = self[1]:getSize()
+    return Geom:new{ w = size.w + 2 * self.bordersize, h = size.h + 2 * self.bordersize }
+end
+
+function Theme.RoundedFrame:paintTo(bb, x, y)
+    local size = self:getSize()
+    local w, h, r, b = size.w, size.h, self.radius, self.bordersize
+    self.dimen = Geom:new{ x = x, y = y, w = w, h = h }
+    bb:paintRoundedRect(x, y, w, h, self.background, r)
+    self[1]:paintTo(bb, x + b, y + b)
+    -- Trim whatever the content painted outside the rounded corners.
+    for dy = 0, r - 1 do
+        local yy = r - dy - 0.5
+        local cut = math.ceil(r - math.sqrt(math.max(0, r * r - yy * yy)) - 0.5)
+        if cut > 0 then
+            bb:paintRect(x, y + dy, cut, 1, self.outside)
+            bb:paintRect(x + w - cut, y + dy, cut, 1, self.outside)
+            bb:paintRect(x, y + h - 1 - dy, cut, 1, self.outside)
+            bb:paintRect(x + w - cut, y + h - 1 - dy, cut, 1, self.outside)
+        end
+    end
+    bb:paintBorder(x, y, w, h, b, self.color, r)
+end
+
 --- Width left for content inside a default Theme.card.
 function Theme.cardInner(w)
     return w - 2 * (Size.padding.default + Size.border.thin)
@@ -117,6 +153,17 @@ function Theme.heartIcon(size)
     }
 end
 
+--- The little pencil (tip pointing down-left). `size` is its width.
+function Theme.pencilIcon(size)
+    size = Theme.px(size or 20)
+    return ImageWidget:new{
+        file = Theme.dir .. "/icons/pencil.svg",
+        width = size,
+        height = size,
+        alpha = true,
+    }
+end
+
 --- A widget with a bow beside it ("left" or "right", default right).
 function Theme.withBow(widget, size, side)
     local bow, gap = Theme.bow(size), HorizontalSpan:new{ width = Theme.px(6) }
@@ -137,7 +184,7 @@ function Theme.ribbon(size)
 end
 
 --- Borderless soft strip of little stats: value over label, evenly spaced.
-function Theme.statStrip(items, width)
+function Theme.statStrip(items, width, radius)
     local CenterContainer = require("ui/widget/container/centercontainer")
     local inner = Theme.cardInner(width)
     local col_w = math.floor(inner / #items)
@@ -152,7 +199,7 @@ function Theme.statStrip(items, width)
             },
         })
     end
-    return Theme.card(row, { bordersize = 0, radius = Theme.px(18) })
+    return Theme.card(row, { bordersize = 0, radius = radius or Theme.px(18) })
 end
 
 --- A quiet section label: ─── label ───

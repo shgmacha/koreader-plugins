@@ -29,7 +29,6 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
 local Widget = require("ui/widget/widget")
-local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Screen = Device.screen
 local _ = require("gettext")
 
@@ -111,40 +110,7 @@ function GoalWave:paintTo(bb, x, y)
     end
 end
 
---- A rounded frame whose content may touch its edges (like a cover flush at the top):
---- content is painted first, the corners are trimmed to the curve, then the border.
-local RoundedFrame = WidgetContainer:extend{
-    radius = 10,
-    bordersize = 1,
-    color = nil,      -- border color
-    background = nil, -- inside the frame
-    outside = nil,    -- page color used to trim the corners
-}
-
-function RoundedFrame:getSize()
-    local size = self[1]:getSize()
-    return Geom:new{ w = size.w + 2 * self.bordersize, h = size.h + 2 * self.bordersize }
-end
-
-function RoundedFrame:paintTo(bb, x, y)
-    local size = self:getSize()
-    local w, h, r, b = size.w, size.h, self.radius, self.bordersize
-    self.dimen = Geom:new{ x = x, y = y, w = w, h = h }
-    bb:paintRoundedRect(x, y, w, h, self.background, r)
-    self[1]:paintTo(bb, x + b, y + b)
-    -- Trim whatever the content painted outside the rounded corners.
-    for dy = 0, r - 1 do
-        local yy = r - dy - 0.5
-        local cut = math.ceil(r - math.sqrt(math.max(0, r * r - yy * yy)) - 0.5)
-        if cut > 0 then
-            bb:paintRect(x, y + dy, cut, 1, self.outside)
-            bb:paintRect(x + w - cut, y + dy, cut, 1, self.outside)
-            bb:paintRect(x, y + h - 1 - dy, cut, 1, self.outside)
-            bb:paintRect(x + w - cut, y + h - 1 - dy, cut, 1, self.outside)
-        end
-    end
-    bb:paintBorder(x, y, w, h, b, self.color, r)
-end
+local RoundedFrame = Theme.RoundedFrame
 
 --- Makes any widget tappable.
 local Tappable = InputContainer:extend{
@@ -458,7 +424,11 @@ function BlossomView:openBook(id)
     end
     UIManager:show(BlossomDetail:new{
         book = detail,
-        art = function(book, w, h) return self:art(book, w, h, true) end,
+        art = function(book, w, h, fill) return self:art(book, w, h, true, fill) end,
+        aspect = function(book)
+            local bb = self:coverBB(book.md5)
+            return bb and bb:getHeight() / bb:getWidth() or nil
+        end,
     }, "flashui")
 end
 
@@ -881,20 +851,14 @@ function BlossomView:build_year()
             align = "center",
             text(tostring(year.finished), Theme.face("script_bold", 40)),
             text(string.format(_(" of %d books"), goal), Theme.face("script", 22)),
-            -- ✎ as a little superscript: tap to change the goal.
-            VerticalGroup:new{
-                Button:new{
-                    text = "✎",
-                    bordersize = 0,
-                    padding = px(4),
-                    background = Theme.card_bg,
-                    text_font_face = "cfont",
-                    text_font_size = 17,
-                    text_font_bold = false,
-                    callback = function() self:editGoal(goal) end,
-                    show_parent = self,
+            -- A little superscript pencil, tip towards the "s": tap to change the goal.
+            Tappable:new{
+                callback = function() self:editGoal(goal) end,
+                VerticalGroup:new{
+                    align = "left",
+                    Theme.pencilIcon(20),
+                    vspan(22),
                 },
-                vspan(18),
             },
         },
         vspan(8),
@@ -911,13 +875,13 @@ function BlossomView:build_year()
         Theme.card(CenterContainer:new{
             dimen = Geom:new{ w = cardInner(self.inner_w), h = hero:getSize().h + px(8) },
             hero,
-        }, { bordersize = 0, radius = px(24) }),
+        }, { bordersize = 0, radius = px(10) }),
         VerticalSpan:new{ width = gap },
         Theme.statStrip({
             { Data.fmtDuration(year.seconds), _("read") },
             { tostring(year.pages), _("pages") },
             { tostring(year.days_read), year.days_read == 1 and _("day") or _("days") },
-        }, self.inner_w),
+        }, self.inner_w, px(10)),
         VerticalSpan:new{ width = gap },
         Theme.rule(_("reading by month"), self.inner_w),
         vspan(6),
