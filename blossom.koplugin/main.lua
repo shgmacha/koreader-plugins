@@ -62,6 +62,13 @@ local SQL_YEAR_MONTHS = [[
            sum(duration), count(DISTINCT id_book || '-' || page)
     FROM page_stat_data WHERE start_time >= %d AND start_time < %d GROUP BY m;]]
 
+-- Time per book per day; the view keeps each day's longest.
+local SQL_DAY_BOOKS = [[
+    SELECT date(p.start_time, 'unixepoch', 'localtime') AS d, b.id, b.md5, sum(p.duration)
+    FROM page_stat_data p JOIN book b ON b.id = p.id_book
+    WHERE p.start_time >= %d AND p.start_time < %d
+    GROUP BY d, b.id;]]
+
 local SETTINGS_KEY = "blossom"
 
 local Blossom = WidgetContainer:extend{
@@ -175,6 +182,18 @@ function Blossom:loadPeriod(start_time, end_time)
     return Data.summarizePeriod(result.list, result.days)
 end
 
+--- Month books plus each day's most-read book (for calendar covers).
+function Blossom:loadMonth(y, m)
+    local start_time, end_time = Data.monthBounds(y, m)
+    local month = self:loadPeriod(start_time, end_time)
+    local day_rows = self:withDB(function(conn)
+        return rows(conn:exec(string.format(SQL_DAY_BOOKS, start_time, end_time)),
+            { "date", "id", "md5", "seconds" })
+    end)
+    month.top_by_date = Data.topBookPerDay(day_rows)
+    return month
+end
+
 function Blossom:loadBook(id)
     id = tonumber(id)
     if not id then return end
@@ -228,9 +247,7 @@ function Blossom:show()
         loadWeek = function()
             return self:loadPeriod(Data.weekBounds(today))
         end,
-        loadMonth = function(y, m)
-            return self:loadPeriod(Data.monthBounds(y, m))
-        end,
+        loadMonth = function(y, m) return self:loadMonth(y, m) end,
         loadYear = function(y) return self:loadYear(y) end,
         loadBook = function(id) return self:loadBook(id) end,
         getGoal = function() return self:getGoal() end,

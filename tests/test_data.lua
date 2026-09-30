@@ -221,4 +221,24 @@ test("bookDetail speed, time left and missing data", function()
     eq({ blank.title, blank.speed, blank.time_left, blank.first, blank.highlights }, { "Untitled", nil, nil, nil, 0 })
 end)
 
+test("topBookPerDay keeps each day's longest read", function()
+    local top = Data.topBookPerDay({
+        { date = "2026-09-01", id = 1, md5 = "a", seconds = 600 },
+        { date = "2026-09-01", id = 2, md5 = "b", seconds = 1800 },
+        { date = "2026-09-01", id = 3, md5 = "c", seconds = 1800 }, -- tie: first stays
+        { date = "2026-09-02", id = 1, md5 = "a", seconds = 0 },
+        { date = nil, id = 9, md5 = "z", seconds = 99 },
+    })
+    eq(top, { ["2026-09-01"] = { id = 2, md5 = "b", seconds = 1800 } })
+    eq(Data.topBookPerDay(nil), {})
+end)
+
+test("calendar cells carry the day's top book", function()
+    local cal = Data.calendar(2026, 9, {}, "2026-09-30", { ["2026-09-02"] = { id = 2, md5 = "b", seconds = 5 } })
+    -- Sep 2026 starts on Tuesday: 2 blanks, so the 2nd is cell 4.
+    eq(cal.cells[4].book, { id = 2, md5 = "b", seconds = 5 })
+    eq(cal.cells[3].book, nil)
+    eq(Data.calendar(2026, 9, {}, "2026-09-30").cells[4].book, nil)
+end)
+
 H.done()

@@ -100,6 +100,7 @@ local stubs = {
                         return db.book and db.book(tonumber(sql:match("WHERE b.id = (%d+)")))
                     end
                     if sql:find("HAVING last") then return db.year_finished end
+                    if sql:find("GROUP BY d, b.id") then return db.day_books end
                     if sql:find("strftime") then return db.year_months end
                     if sql:find("GROUP BY d ORDER BY d") then
                         if db.days_error then error("days broke") end
@@ -182,6 +183,12 @@ local function resetDB()
     end
     db.year_finished = cols({ { 300, 300, os.time() }, { 200, 50, os.time() } })
     db.year_months = cols({ { os.date("%m"), 5400, 120 } })
+    -- date, id, md5, seconds: today Anathema (a.epub) beats Atomic Habits; yesterday only an uncovered book.
+    db.day_books = cols({
+        { today, 2, "zzz", 300 },
+        { today, 1, "md5:/books/a.epub", 900 },
+        { Data.addDays(today, -1) >= os.date("%Y-%m-01") and Data.addDays(today, -1) or today, 7, "nope", 100 },
+    })
     G_reader_settings.data = {}
     db.period = function()
         return cols({ book("Anathema", "md5:/books/a.epub", 3000, 300, 300), book("Lost", "nope", 600, 100, 10) })
@@ -625,6 +632,31 @@ test("loadBook handles bad ids and missing rows", function()
     eq(p:loadBook(nil), nil)
     eq(p:loadBook(999), nil)
     eq(p:loadBook(2).title, "Atomic Habits")
+end)
+
+test("calendar shows the most-read book's cover on its day; tap opens details", function()
+    resetDB()
+    local view = openView()
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    local month = view.periods[os.date("%Y-%m")]
+    eq(month.top_by_date[today].md5, "md5:/books/a.epub")
+    eq(count(view, "ImageWidget"), 1) -- only days whose top book has a cover
+    local day_tile = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
+    assert(day_tile, "today's cover cell is tappable")
+    day_tile:onTap()
+    eq(lastOfKind("InfoMessage").text, "Couldn't find this book's petals ❀") -- id 1 not in fake book table
+    -- other days still show number + flower
+    assert(texts(view):find("less"))
+end)
+
+test("calendar without day data falls back to plain days", function()
+    resetDB()
+    db.day_books = nil
+    local view = openView()
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    eq(count(view, "ImageWidget"), 0)
 end)
 
 H.done()

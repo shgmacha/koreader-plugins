@@ -26,7 +26,7 @@ Swipe left / right (or use the page-turn buttons) between five pages:
 | **My reading garden** | A greeting, books loved, total reading time, pages turned, your day streak ♥, today, this week, your longest streak and a little affirmation |
 | **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (❀ = you read that day) and the covers of the **books that kept you company** this week |
 | **My books** | Your 6 most recent books with a little cover, a progress ribbon, time spent and a ♥ when finished |
-| **This month** | Month totals and a grid of **book covers** you read that month, or tap **▦ calendar** for a Sunday-first calendar shaded by how long you read each day; use ‹ › to look back at earlier months |
+| **This month** | Month totals and a grid of **book covers** you read that month, or tap **▦ calendar** for a Sunday-first calendar where each day shows the cover of the book you read longest that day (shaded by how long you read; tap a day to open the book); use ‹ › to look back at earlier months |
 | **My year** | Your **yearly reading goal** (books finished): a row of hearts, a progress ribbon, whether you're ahead or behind, and minutes read per month. Tap **✎ set my goal** to change it |
 
 Tap any book (a row or a cover) to open its **book details**: a big cover, time spent together,

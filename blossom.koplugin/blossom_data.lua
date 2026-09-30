@@ -235,9 +235,24 @@ function Data.level(seconds)
     return 3
 end
 
+--- rows = {{date, id, md5, seconds}} → { [date] = {id, md5, seconds} } keeping each day's longest read.
+function Data.topBookPerDay(rows)
+    local top = {}
+    for _, row in ipairs(rows or {}) do
+        local seconds = tonumber(row.seconds) or 0
+        local best = top[row.date]
+        if row.date and seconds > 0 and (not best or seconds > best.seconds) then
+            top[row.date] = { id = tonumber(row.id), md5 = row.md5, seconds = seconds }
+        end
+    end
+    return top
+end
+
 --- Sunday-first month grid; `false` cells pad the first and last weeks.
-function Data.calendar(y, m, by_date, today)
+--- top_by_date (optional) adds the day's most-read book to each cell.
+function Data.calendar(y, m, by_date, today, top_by_date)
     by_date = by_date or {}
+    top_by_date = top_by_date or {}
     local cells = {}
     local first_wday = os.date("*t", os.time{ year = y, month = m, day = 1, hour = 12 }).wday
     for _ = 1, first_wday - 1 do cells[#cells + 1] = false end
@@ -251,6 +266,7 @@ function Data.calendar(y, m, by_date, today)
             level = Data.level(seconds),
             today = date == today,
             future = today ~= nil and date > today,
+            book = top_by_date[date],
         }
     end
     while #cells % 7 ~= 0 do cells[#cells + 1] = false end

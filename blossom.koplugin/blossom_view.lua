@@ -547,8 +547,45 @@ function BlossomView:build_books()
     return group
 end
 
-function BlossomView:calendarGrid(avail_h)
-    local cal = Data.calendar(self.year, self.month, self.stats.by_date, self.stats.today)
+--- A day with a book: its cover on the day's shade, the date on a little badge.
+function BlossomView:coverDay(day, cell, border)
+    local inner = cell - 2 * border
+    local pad = px(3)
+    local badge = FrameContainer:new{
+        padding = 0,
+        padding_left = px(4),
+        padding_right = px(4),
+        margin = 0,
+        radius = px(6),
+        bordersize = Size.border.thin,
+        color = Theme.accent,
+        background = Theme.bg,
+        text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 12)),
+    }
+    badge.overlap_offset = { pad, pad }
+    local cover = CenterContainer:new{
+        dimen = Geom:new{ w = inner, h = inner },
+        self:art(day.book, inner - 2 * pad, inner - 2 * pad, false),
+    }
+    return self:tappable(FrameContainer:new{
+        width = cell,
+        height = cell,
+        padding = 0,
+        margin = 0,
+        radius = px(8),
+        bordersize = border,
+        color = day.today and Theme.ink or Theme.petal,
+        background = Theme.shades[day.level + 1],
+        OverlapGroup:new{
+            dimen = Geom:new{ w = inner, h = inner },
+            cover,
+            badge,
+        },
+    }, day.book)
+end
+
+function BlossomView:calendarGrid(avail_h, top_by_date)
+    local cal = Data.calendar(self.year, self.month, self.stats.by_date, self.stats.today, top_by_date)
     local gap = px(4)
     local header_h = text("Su", Theme.face("bold", 14)):getSize().h
     local legend_h = px(30)
@@ -577,6 +614,8 @@ function BlossomView:calendarGrid(avail_h)
             local day = cal.cells[(r - 1) * 7 + c]
             if not day then
                 cells[c] = RectSpan:new{ width = cell, height = cell }
+            elseif day.book and day.book.md5 and self:coverBB(day.book.md5) then
+                cells[c] = self:coverDay(day, cell, day.today and Size.border.thick or Size.border.thin)
             else
                 local border = day.today and Size.border.thick or Size.border.thin
                 local inner = cell - 2 * border
@@ -669,7 +708,7 @@ function BlossomView:build_month()
         VerticalSpan:new{ width = gap },
     }
     if calendar_mode then
-        table.insert(group, self:calendarGrid(self.content_h - heightOf(group)))
+        table.insert(group, self:calendarGrid(self.content_h - heightOf(group), month.top_by_date))
         return group
     end
     if month.books == 0 then
