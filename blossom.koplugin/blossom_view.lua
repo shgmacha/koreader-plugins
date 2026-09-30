@@ -863,7 +863,10 @@ function BlossomView:build_month()
     -- "▦  ‹ September 2026 ›  ❀": plain icons; the view you're on is black, the other soft gray.
     local function mode(label, key)
         local active = self.month_mode == key
-        local icon = text(label, Theme.face("ui", 22), { color = active and Theme.ink or Theme.bar })
+        -- "rose" is the drawn stemless rose (dark when active, soft when not); others are text glyphs.
+        local icon = label == "rose"
+            and Theme.icon(active and "rose_bloom" or "rose_bloom_soft", 26)
+            or text(label, Theme.face("ui", 22), { color = active and Theme.ink or Theme.bar })
         icon.mode_key, icon.active = key, active
         return Tappable:new{
             callback = function()
@@ -875,7 +878,7 @@ function BlossomView:build_month()
             CenterContainer:new{ dimen = Geom:new{ w = px(48), h = px(44) }, icon },
         }
     end
-    local left, right = mode("▦", "calendar"), mode("❀", "covers")
+    local left, right = mode("▦", "calendar"), mode("rose", "covers")
     local side_w = math.max(left:getSize().w, right:getSize().w)
     local title_w = self.inner_w - 2 * side_w - 2 * px(40)
     local switcher = HorizontalGroup:new{

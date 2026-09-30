@@ -53,7 +53,7 @@ function BlossomDetail:statValues()
     local b = self.book
     return {
         { Theme.open_heart, Data.fmtDuration(b.seconds), _("time together") },
-        { Theme.flower, tostring(b.days), b.days == 1 and _("reading day") or _("reading days") },
+        { Theme.icon("rose_bloom", 18), tostring(b.days), b.days == 1 and _("reading day") or _("reading days") },
         { "✧", b.speed and tostring(b.speed) or "—", _("pages per hour") },
         { "☾", b.finished and "—" or (b.time_left and Data.fmtDuration(b.time_left) or "—"),
           b.finished and _("all read!") or _("left to read") },

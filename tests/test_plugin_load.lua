@@ -600,7 +600,7 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     view:goToPage(4)
     -- header: ▦ ‹ Month › ❀ as plain icons (no frames); active black, inactive gray
     local t0 = texts(view)
-    assert(t0:find("▦\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n❀\n"), t0)
+    assert(t0:find("▦\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n"), t0)
     local function modeButtons()
         local btns, icons = {}, {}
         walk(view, function(n)
@@ -611,10 +611,13 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
         return btns, icons
     end
     local btns, icons = modeButtons()
-    eq({ icons.covers.active, icons.calendar.active, icons.covers.fgcolor, icons.calendar.fgcolor }, { true, false, 0, 0x99 })
+    eq({ icons.covers.active, icons.calendar.active, icons.calendar.fgcolor }, { true, false, 0x99 })
+    assert(icons.covers.file:find("icons/rose_bloom%.svg$"), "covers button is the drawn rose (dark while active)")
     walk(btns.calendar, function(n) assert(n.kind ~= "Framecontainer", "icons have no frame") end)
     btns.calendar:onTap()
     eq(view.month_mode, "calendar")
+    local _, icons2 = modeButtons()
+    assert(icons2.covers.file:find("rose_bloom_soft"), "inactive rose is soft")
     local t = texts(view)
     assert(t:find("Su\nMo\nTu"), t)
     assert(t:find("less"), t)
@@ -880,7 +883,7 @@ test("days without reading are not tappable", function()
     local n = 0
     walk(view, function(x)
         local tx = getmetatable(x) == BlossomView.Tappable and texts(x)
-        if tx and tx ~= "▦" and tx ~= "❀" and tx ~= "" then n = n + 1 end -- not the mode icons or the close flower
+        if tx and tx ~= "▦" and tx ~= "" then n = n + 1 end -- not the mode icons or the close flower
     end)
     eq(n, 0)
 end)
@@ -952,6 +955,7 @@ test("the close button is a flower at the top-left", function()
     end)
     assert(close, "flower close button")
     eq(close.overlap_offset[1] < 60, true)
+    eq(close.overlap_offset[2], 36) -- lower, level with the title
     close:onTap()
     eq(closed[#closed] == view, true)
 end)
@@ -1321,6 +1325,18 @@ test("pages opened from the dashboard have a back flower at the top-left", funct
     eq(closed[#closed] == more, true)
     view:openBook(2)
     assert(backButton(shown[#shown]), "book details too")
+end)
+
+test("book details: reading days wears a drawn stemless rose", function()
+    resetDB()
+    local view = openView()
+    view:openBook(2)
+    local rose
+    walk(shown[#shown], function(n)
+        if n.kind == "HorizontalGroup" and n[1] and n[1].file and n[1].file:find("icons/rose_bloom%.svg$") then rose = n end
+    end)
+    assert(rose, "rose beside the reading-days number")
+    eq(texts(rose), "5")
 end)
 
 H.done()

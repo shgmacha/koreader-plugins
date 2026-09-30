@@ -234,8 +234,18 @@ function Theme.statGrid(items, width, cols, opts)
             table.insert(body, item[4])
             table.insert(body, Theme.vspan(4))
         end
-        table.insert(body, Theme.text(item[4] and item[2] or (item[1] .. " " .. item[2]),
-            Theme.face("bold", opts.value_size or 16), { max_width = col_w }))
+        local value_face = Theme.face("bold", opts.value_size or 16)
+        if type(item[1]) == "table" and not item[4] then
+            -- a drawn icon (widget) beside the value
+            table.insert(body, HorizontalGroup:new{
+                align = "center",
+                item[1],
+                HorizontalSpan:new{ width = Theme.px(5) },
+                Theme.text(item[2], value_face, { max_width = col_w }),
+            })
+        else
+            table.insert(body, Theme.text(item[4] and item[2] or (item[1] .. " " .. item[2]), value_face, { max_width = col_w }))
+        end
         table.insert(body, Theme.text(item[3], Theme.face("script", opts.label_size or 13), { color = Theme.soft_ink, max_width = col_w }))
         local cell = CenterContainer:new{
             dimen = Geom:new{ w = col_w, h = Theme.px(opts.cell_h or 46) },
@@ -407,7 +417,8 @@ function Theme.header(title, width, on_close, show_parent, opts)
         callback = on_close,
         Theme.icon((opts and opts.back) and "back_flower" or "close_flower", 34),
     }
-    close.overlap_offset = { Theme.px(Theme.MARGIN) - Theme.px(4), Theme.px(10) }
+    -- level with the page title rather than the very top edge
+    close.overlap_offset = { Theme.px(Theme.MARGIN) - Theme.px(4), Theme.px(36) }
 
     titles.overlap_align = "center"
     return OverlapGroup:new{

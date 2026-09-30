@@ -93,9 +93,22 @@ def lily(x=24, y=24):
                 f'<circle cx="{x}" cy="{y-10}" r="1.8" transform="rotate({a} {x} {y})" fill="{INK}"/>')
     return out
 
+def rose_bloom(x=24, y=24, ink=INK, petal=PETAL, light=LIGHT):
+    """A rose seen from above, no stem: five round outer petals, a cupped middle and a spiral heart."""
+    st = f'stroke="{ink}" stroke-linejoin="round" stroke-linecap="round"'
+    out = ""
+    for k in range(5):
+        a = 72 * k
+        out += (f'<circle cx="{x}" cy="{y-10}" r="9" transform="rotate({a} {x} {y})" fill="{petal}" {st} stroke-width="2"/>')
+    out += f'<circle cx="{x}" cy="{y}" r="11" fill="{light}" {st} stroke-width="2"/>'
+    out += (f'<path d="M{x-6} {y+1} C{x-6} {y-6} {x+5} {y-7} {x+6} {y-1} C{x+7} {y+5} {x} {y+7} {x-3} {y+3} '
+            f'C{x-5} {y} {x-1} {y-4} {x+2} {y-2} C{x+4} {y} {x+1} {y+3} {x} {y+1}" fill="none" {st} stroke-width="1.8"/>')
+    return out
+
 ICONS = {
     "tulip": tulip(), "daisy": daisy(), "sprout": sprout(), "rose": rose(), "bud": bud(),
-    "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(), "close_flower": close_flower(), "back_flower": back_flower(), "lily": lily(),
+    "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(), "close_flower": close_flower(), "back_flower": back_flower(), "lily": lily(), "rose_bloom": rose_bloom(),
+    "rose_bloom_soft": rose_bloom(ink=MID, petal=LIGHT, light="#f6f6f6"),
 }
 
 def bed(w=600, h=90):
