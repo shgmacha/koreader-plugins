@@ -469,7 +469,7 @@ end
 --- The garden's "tell me more" pages.
 function BlossomView:openMore(key)
     local s = self.stats
-    local function books(list, title, subtitle, caption, empty)
+    local function books(list, title, subtitle, caption, empty, no_title)
         return BlossomMore:new{
             title = title,
             subtitle = subtitle,
@@ -477,7 +477,7 @@ function BlossomView:openMore(key)
             items = list or {},
             empty_text = empty,
             gallery = function(slice, avail_h)
-                return self:galleryGrid(slice, avail_h, SHELF_COLS, SHELF_ROWS, caption)
+                return self:galleryGrid(slice, avail_h, SHELF_COLS, SHELF_ROWS, caption, no_title)
             end,
         }
     end
@@ -486,7 +486,11 @@ function BlossomView:openMore(key)
         return self:period(cache_key, function() return self.loadPeriod(start_time, end_time) end).list
     end
     local page
-    if key == "books" then
+    if key == "shelf" then
+        -- My books' "See more …": the whole shelf, looking just like My books.
+        local list = self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
+        page = books(list, _("All my books"), count(list) .. " " .. Theme.flower, nil, nil, true)
+    elseif key == "books" then
         local list = self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
         page = books(list, _("Books loved"), count(list) .. " " .. Theme.flower)
     elseif key == "time" then
@@ -704,18 +708,24 @@ function BlossomView:build_books()
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
-    -- Every book, 8 to a page; a touch smaller than the full page, centred, so it can breathe.
+    -- The 8 most recent books; "See more …" opens the whole shelf as its own gallery.
     local all = self.loadBooks and self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
     if not all or #all == 0 then all = s.recent end
-    local slice, pager = self:pageOf("books", all, SHELF_COLS * SHELF_ROWS)
-    local pager_h = pager and px(44) or 0
+    local per_page = SHELF_COLS * SHELF_ROWS
+    local slice = {}
+    for i = 1, math.min(per_page, #all) do slice[i] = all[i] end
+    local more = #all > per_page
+    local link_h = more and px(44) or 0
     local shelf = VerticalGroup:new{
         align = "center",
-        self:galleryGrid(slice, floor((self.content_h - pager_h) * 0.86), SHELF_COLS, SHELF_ROWS, nil, true),
+        self:galleryGrid(slice, floor((self.content_h - link_h) * 0.86), SHELF_COLS, SHELF_ROWS, nil, true),
     }
-    if pager then
-        table.insert(shelf, vspan(10))
-        table.insert(shelf, pager)
+    if more then
+        table.insert(shelf, vspan(14))
+        table.insert(shelf, Tappable:new{
+            callback = function() self:openMore("shelf") end,
+            text(string.format(_("See more … %s"), Theme.flower), Theme.face("script", 17), { color = Theme.soft_ink }),
+        })
     end
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },

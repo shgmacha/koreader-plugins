@@ -284,6 +284,14 @@ local function pagerState(root)
     return found
 end
 
+local function findTappable(view, pred)
+    local found
+    walk(view, function(n)
+        if not found and getmetatable(n) == require("blossom_view").Tappable and pred(texts(n)) then found = n end
+    end)
+    return found
+end
+
 local function bows(w)
     local n = 0
     walk(w, function(x) if x.kind == "ImageWidget" and x.file and x.file:find("icons/bow.svg$") then n = n + 1 end end)
@@ -417,7 +425,23 @@ test("books gallery shows at most 8 covers, 4 per row", function()
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 8)
-    eq(pagerState(view), "1/2") -- 9 books: two pages
+    eq(pagerState(view), nil) -- no second pager on My books
+    -- "See more …" opens the whole shelf, paged, without title lines
+    local link = findTappable(view, function(x) return x:find("^See more …") end)
+    assert(link, "See more link")
+    link:onTap()
+    local shelf = shown[#shown]
+    eq(getmetatable(shelf) == require("blossom_more"), true)
+    local st = texts(shelf)
+    assert(st:find("All my books") and st:find("9 books"), st)
+    eq(pagerState(shelf), "1/2")
+    shelf:onNextPage()
+    local left = 0
+    walk(shelf, function(n) if getmetatable(n) == BlossomView.RoundedFrame then left = left + 1 end end)
+    eq(left, 1)
+    local titles = 0
+    walk(shelf, function(n) if n.text == "Book 9" then titles = titles + 1 end end)
+    eq(titles, 0) -- placeholder art only; no title line under the tile
     local rows = 0
     walk(view, function(n)
         if n.kind == "HorizontalGroup" then
@@ -579,13 +603,6 @@ local function lastOfKind(kind)
     for i = #shown, 1, -1 do if shown[i].kind == kind then return shown[i] end end
 end
 
-local function findTappable(view, pred)
-    local found
-    walk(view, function(n)
-        if not found and getmetatable(n) == BlossomView.Tappable and pred(texts(n)) then found = n end
-    end)
-    return found
-end
 
 test("My books rows show small covers or flower placeholders", function()
     resetDB()

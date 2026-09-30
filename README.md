@@ -56,7 +56,8 @@ marks the current page.
 
 <img src="docs/screenshots/3-books.png" width="300" align="right" alt="My books">
 
-- Every book you've read, most recent first, 8 per page (4×2).
+- Your 8 most recent books (4×2). **See more …** opens **All my books**: every book you've read,
+  8 per page.
 - Each cover sits edge to edge in a rounded frame, with its title, **% read** and **time spent** below.
 - Finished books get a little 🎀 bow.
 
