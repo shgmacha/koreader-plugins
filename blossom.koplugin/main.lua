@@ -11,12 +11,14 @@ local Dispatcher = require("dispatcher")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local lfs = require("libs/libkoreader-lfs")
+local T = require("ffi/util").template
 local logger = require("logger")
 local _ = require("gettext")
 
 local BlossomView = require("blossom_view")
 local Covers = require("blossom_covers")
 local Data = require("blossom_data")
+local Theme = require("blossom_theme")
 
 local RECENT_BOOKS = 8
 
@@ -81,6 +83,16 @@ local BOOK_ORDERS = {
 
 local SETTINGS_KEY = "blossom"
 
+-- The pages Blossom can open on (the dashboard's five, plus the book being read).
+local START_PAGES = {
+    { key = "overview", text = _("My reading garden") },
+    { key = "week", text = _("This week") },
+    { key = "books", text = _("My books") },
+    { key = "month", text = _("This month") },
+    { key = "year", text = _("My year") },
+    { key = "current_book", text = _("The book I'm reading") },
+}
+
 local Blossom = WidgetContainer:extend{
     name = "blossom",
     is_doc_only = false,
@@ -99,14 +111,112 @@ function Blossom:onDispatcherRegisterActions()
         title = _("Blossom reading diary"),
         general = true,
     })
+    Dispatcher:registerAction("blossom_show_book", {
+        category = "none",
+        event = "BlossomShowBook",
+        title = _("This book in Blossom"),
+        reader = true,
+    })
 end
 
 function Blossom:addToMainMenu(menu_items)
+    local start_pages = {}
+    for _i, page in ipairs(START_PAGES) do
+        start_pages[#start_pages + 1] = {
+            text = page.text,
+            radio = true,
+            checked_func = function() return self:getSetting("start_page") == page.key end,
+            callback = function() self:setSetting("start_page", page.key) end,
+        }
+    end
     menu_items.blossom = {
         text = _("❀ Blossom reading diary"),
         sorting_hint = "tools",
-        callback = function() self:show() end,
+        sub_item_table = {
+            {
+                text = _("Open Blossom"),
+                callback = function() self:show() end,
+            },
+            {
+                text = _("This book in Blossom"),
+                enabled_func = function() return self:isReading() end,
+                callback = function() self:show({ book = true }) end,
+                separator = true,
+            },
+            {
+                text = _("Open as"),
+                sub_item_table = {
+                    {
+                        text = _("Full screen"),
+                        radio = true,
+                        checked_func = function() return self:getSetting("open_as") ~= "window" end,
+                        callback = function() self:setSetting("open_as", "fullscreen") end,
+                    },
+                    {
+                        text = _("Floating window over my bookshelf or book"),
+                        radio = true,
+                        checked_func = function() return self:getSetting("open_as") == "window" end,
+                        callback = function() self:setSetting("open_as", "window") end,
+                    },
+                },
+            },
+            {
+                text_func = function()
+                    local key = self:getSetting("start_page") or "overview"
+                    for _i, page in ipairs(START_PAGES) do
+                        if page.key == key then return T(_("Start on: %1"), page.text) end
+                    end
+                    return _("Start on")
+                end,
+                sub_item_table = start_pages,
+            },
+            {
+                text_func = function() return T(_("Yearly goal: %1 books"), self:getGoal()) end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    self:editGoalFromMenu(touchmenu_instance)
+                end,
+            },
+        },
     }
+end
+
+function Blossom:onBlossomShowBook()
+    self:show({ book = true })
+    return true
+end
+
+function Blossom:isReading()
+    return self.ui ~= nil and self.ui.document ~= nil
+end
+
+--- The statistics id of the open book (nil outside the reader or when unknown).
+function Blossom:currentBookId()
+    if not self:isReading() then return end
+    local stats = self.ui.statistics
+    if stats and tonumber(stats.id_curr_book) then return tonumber(stats.id_curr_book) end
+    local md5 = self.ui.doc_settings and self.ui.doc_settings:readSetting("partial_md5_checksum")
+    if type(md5) ~= "string" or not md5:match("^%x+$") then return end
+    return self:withDB(function(conn)
+        return tonumber(conn:rowexec(string.format("SELECT id FROM book WHERE md5 = '%s';", md5)))
+    end)
+end
+
+function Blossom:editGoalFromMenu(touchmenu_instance)
+    local SpinWidget = require("ui/widget/spinwidget")
+    UIManager:show(SpinWidget:new{
+        title_text = _("Books to read this year ♡"),
+        value = self:getGoal(),
+        value_min = 1,
+        value_max = 365,
+        value_step = 1,
+        value_hold_step = 5,
+        ok_text = _("Save ♥"),
+        callback = function(spin)
+            self:setGoal(spin.value)
+            if touchmenu_instance then touchmenu_instance:updateItems() end
+        end,
+    })
 end
 
 function Blossom:onBlossomShow()
@@ -323,6 +433,17 @@ end
 
 -- Settings -------------------------------------------------------------------
 
+function Blossom:getSetting(key)
+    return (G_reader_settings:readSetting(SETTINGS_KEY) or {})[key]
+end
+
+function Blossom:setSetting(key, value)
+    local settings = G_reader_settings:readSetting(SETTINGS_KEY) or {}
+    settings[key] = value
+    G_reader_settings:saveSetting(SETTINGS_KEY, settings)
+    G_reader_settings:flush()
+end
+
 function Blossom:getGoal()
     local settings = G_reader_settings:readSetting(SETTINGS_KEY) or {}
     return Data.validGoal(settings.yearly_goal)
@@ -337,8 +458,11 @@ end
 
 -- UI -------------------------------------------------------------------------
 
-function Blossom:show()
+--- Opens Blossom. opts.book: go straight to the book being read.
+function Blossom:show(opts)
+    opts = opts or {}
     self:flushStats()
+    Theme.layout.window = self:getSetting("open_as") == "window"
     local today = os.date("%Y-%m-%d")
     local raw, err = self:loadRaw()
     local stats = Data.summarize(raw, today)
@@ -347,7 +471,13 @@ function Blossom:show()
     stats.notes = notes
     stats.highlights, stats.bookmarks = #notes.highlights, #notes.bookmarks
     self.covers = Covers.new()
-    UIManager:show(BlossomView:new{
+    local start = self:getSetting("start_page") or "overview"
+    local page = 1
+    for i, key in ipairs(BlossomView.PAGES) do
+        if key == start then page = i end
+    end
+    local view = BlossomView:new{
+        page = page,
         stats = stats,
         hour = tonumber(os.date("%H")),
         covers = self.covers,
@@ -362,7 +492,19 @@ function Blossom:show()
         loadPeriod = function(s, e) return self:loadPeriod(s, e) end,
         getGoal = function() return self:getGoal() end,
         setGoal = function(goal) self:setGoal(goal) end,
-    }, "flashui")
+    }
+    Theme.showPage(view)
+    -- "This book in Blossom", or starting on the book being read: its details on top of the diary.
+    if opts.book or start == "current_book" then
+        local id = self:currentBookId()
+        if id then
+            view:openBook(id)
+        elseif opts.book then
+            UIManager:show(require("ui/widget/infomessage"):new{
+                text = _("This book has no reading statistics yet ❀"), timeout = 3 })
+        end
+    end
+    return view
 end
 
 return Blossom

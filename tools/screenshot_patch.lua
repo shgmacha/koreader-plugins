@@ -30,6 +30,16 @@ local steps = {
         UIManager:close(UIManager._window_stack[#UIManager._window_stack].widget)
         v:openMore("bookmarks")
     end },
+    { "12-window", function(v)
+        -- Close everything Blossom showed, then reopen as a floating window over the bookshelf.
+        UIManager:close(UIManager._window_stack[#UIManager._window_stack].widget)
+        UIManager:close(v)
+        local s = G_reader_settings:readSetting("blossom") or {}
+        s.open_as = "window"
+        G_reader_settings:saveSetting("blossom", s)
+        local host = require("apps/filemanager/filemanager").instance or require("apps/reader/readerui").instance
+        host.blossom:show()
+    end },
 }
 
 UIManager:scheduleIn(4, function()

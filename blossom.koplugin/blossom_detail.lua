@@ -32,12 +32,10 @@ local BlossomDetail = InputContainer:extend{
     book = nil, -- Data.bookDetail result
     art = nil,     -- function(book, w, h, fill) -> cover widget
     aspect = nil,  -- function(book) -> cover height / width, or nil without a cover
-    covers_fullscreen = true,
 }
 
 function BlossomDetail:init()
-    self.width, self.height = Screen:getWidth(), Screen:getHeight()
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    Theme.initPage(self)
     self.inner_w = self.width - 2 * px(Theme.MARGIN)
     if Device:isTouchDevice() then
         self.ges_events = {
@@ -47,6 +45,7 @@ function BlossomDetail:init()
     if Device:hasKeys() then
         self.key_events = { Close = { { Device.input.group.Back } } }
     end
+    Theme.addWindowGestures(self)
     self:build()
 end
 
@@ -188,12 +187,7 @@ function BlossomDetail:build()
     end
 
     if self[1] then self[1]:free() end
-    self[1] = FrameContainer:new{
-        width = self.width,
-        height = self.height,
-        background = Theme.bg,
-        bordersize = 0,
-        padding = 0,
+    self[1] = Theme.pageFrame(self,
         OverlapGroup:new{
             dimen = Geom:new{ w = self.width, h = self.height },
             VerticalGroup:new{
@@ -206,8 +200,8 @@ function BlossomDetail:build()
                 dimen = Geom:new{ w = self.width, h = self.height },
                 VerticalGroup:new{ align = "center", pager, vspan(6) },
             } or nil,
-        },
-    }
+        }
+    )
 end
 
 function BlossomDetail:turnHighlights(delta)

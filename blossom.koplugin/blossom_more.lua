@@ -31,13 +31,11 @@ local BlossomMore = InputContainer:extend{
     gallery = nil,     -- function(books, avail_h) -> widget (gallery pages)
     empty_text = nil,
     page = 1,
-    covers_fullscreen = true,
 }
 
 function BlossomMore:init()
     self.items = self.items or {}
-    self.width, self.height = Screen:getWidth(), Screen:getHeight()
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    Theme.initPage(self)
     self.inner_w = self.width - 2 * px(Theme.MARGIN)
     self.starts = { 1 } -- first item of each list page
     if Device:isTouchDevice() then
@@ -50,6 +48,7 @@ function BlossomMore:init()
             PrevPage = { { Device.input.group.PgBack } },
         }
     end
+    Theme.addWindowGestures(self)
     self:build()
 end
 
@@ -138,12 +137,7 @@ function BlossomMore:build()
 
     if self[1] then self[1]:free() end
     local full = Geom:new{ w = self.width, h = self.height }
-    self[1] = FrameContainer:new{
-        width = self.width,
-        height = self.height,
-        background = Theme.bg,
-        bordersize = 0,
-        padding = 0,
+    self[1] = Theme.pageFrame(self,
         OverlapGroup:new{
             dimen = full,
             VerticalGroup:new{
@@ -153,8 +147,8 @@ function BlossomMore:build()
                 content,
             },
             BottomContainer:new{ dimen = full, self:buildFooter() },
-        },
-    }
+        }
+    )
 end
 
 function BlossomMore:refresh()

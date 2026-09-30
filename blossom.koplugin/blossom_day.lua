@@ -35,12 +35,10 @@ local BlossomDay = InputContainer:extend{
     day = nil,       -- loadDay result: period summary + date + notes
     art = nil,       -- function(book, w, h) -> cover widget
     tappable = nil,  -- function(widget, book) -> tappable widget opening the book
-    covers_fullscreen = true,
 }
 
 function BlossomDay:init()
-    self.width, self.height = Screen:getWidth(), Screen:getHeight()
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    Theme.initPage(self)
     self.inner_w = self.width - 2 * px(Theme.MARGIN)
     if Device:isTouchDevice() then
         self.ges_events = {
@@ -50,6 +48,7 @@ function BlossomDay:init()
     if Device:hasKeys() then
         self.key_events = { Close = { { Device.input.group.Back } } }
     end
+    Theme.addWindowGestures(self)
     self:build()
 end
 
@@ -169,12 +168,7 @@ function BlossomDay:build()
     end
 
     if self[1] then self[1]:free() end
-    self[1] = FrameContainer:new{
-        width = self.width,
-        height = self.height,
-        background = Theme.bg,
-        bordersize = 0,
-        padding = 0,
+    self[1] = Theme.pageFrame(self,
         OverlapGroup:new{
             dimen = Geom:new{ w = self.width, h = self.height },
             VerticalGroup:new{
@@ -187,8 +181,8 @@ function BlossomDay:build()
                 dimen = Geom:new{ w = self.width, h = self.height },
                 VerticalGroup:new{ align = "center", pager, vspan(6) },
             } or nil,
-        },
-    }
+        }
+    )
 end
 
 function BlossomDay:bookmarkRow(b)

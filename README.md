@@ -114,6 +114,25 @@ Tap a day in the calendar to see:
 
 <br clear="right">
 
+### Open it your way
+
+<img src="docs/screenshots/12-window.png" width="300" align="right" alt="Blossom as a floating window over the bookshelf">
+
+Everything is in **Tools (🔧) → ❀ Blossom reading diary**:
+
+- **Open Blossom.**
+- **This book in Blossom:** while reading, jumps straight to the details of the book you're in.
+- **Open as:**
+  - **Full screen.**
+  - **Floating window** over your bookshelf or the book you're reading. Tap outside the window to close it.
+- **Start on:** which page opens first: My reading garden, This week, My books, This month, My year,
+  or *the book I'm reading*.
+- **Yearly goal:** change it here, or with the ✎ on My year.
+
+Both **Blossom reading diary** and **This book in Blossom** can be bound to a gesture.
+
+<br clear="right">
+
 ### Getting around
 
 - **Paging:** every gallery and list pages the same way: soft dots, a little sprout for the page
@@ -132,13 +151,16 @@ Tap a day in the calendar to see:
 4. Open **Tools (🔧) → ❀ Blossom reading diary**.
 
 Tip: bind it to a gesture in **Settings → Taps and gestures → Gesture manager**
-(action **General → Blossom reading diary**).
+(**General → Blossom reading diary**, or **This book in Blossom** while reading).
 
 ## 🎀 Good to know
 
 - **Statistics:** Blossom reads the **Statistics** plugin's data, so keep that plugin enabled
   (it is by default). Blossom never changes your statistics.
-- **What it saves:** only your yearly goal (`blossom.yearly_goal` in KOReader's settings, default 12).
+- **What it saves:** only its own settings, under `blossom` in KOReader's settings:
+  - `yearly_goal` (default 12)
+  - `open_as` (`fullscreen` or `window`)
+  - `start_page`
 - **Covers:** they come from the Cover Browser cache when available, otherwise from the book file.
   Books that were moved or deleted get a soft placeholder tile instead.
 - **Highlights, bookmarks and snippets:** these come from each book's KOReader sidecar (`.sdr`).

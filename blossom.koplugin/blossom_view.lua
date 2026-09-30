@@ -204,12 +204,10 @@ local BlossomView = InputContainer:extend{
     setGoal = nil,     -- function(n)
     page = 1,
     month_mode = "covers", -- or "calendar"
-    covers_fullscreen = true,
 }
 
 function BlossomView:init()
-    self.width, self.height = Screen:getWidth(), Screen:getHeight()
-    self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
+    Theme.initPage(self)
     self.margin = px(Theme.MARGIN)
     self.inner_w = self.width - 2 * self.margin
     local now = os.date("*t")
@@ -231,6 +229,7 @@ function BlossomView:init()
             PrevPage = { { Device.input.group.PgBack } },
         }
     end
+    Theme.addWindowGestures(self)
     self:build()
 end
 
@@ -241,12 +240,7 @@ function BlossomView:build()
     self.content_h = self.height - header:getSize().h - footer:getSize().h - px(Theme.TOP_GAP) - px(16)
     local content = self["build_" .. PAGES[self.page]](self)
     local full = Geom:new{ w = self.width, h = self.height }
-    self[1] = FrameContainer:new{
-        width = self.width,
-        height = self.height,
-        background = Theme.bg,
-        bordersize = 0,
-        padding = 0,
+    self[1] = Theme.pageFrame(self,
         OverlapGroup:new{
             dimen = full,
             VerticalGroup:new{
@@ -256,8 +250,8 @@ function BlossomView:build()
                 content,
             },
             BottomContainer:new{ dimen = full, footer },
-        },
-    }
+        }
+    )
 end
 
 function BlossomView:buildFooter()
@@ -439,24 +433,24 @@ function BlossomView:openBook(id)
         UIManager:show(InfoMessage:new{ text = _("Couldn't find this book's petals ❀"), timeout = 3 })
         return
     end
-    UIManager:show(BlossomDetail:new{
+    Theme.showPage(BlossomDetail:new{
         book = detail,
         art = function(book, w, h, fill) return self:art(book, w, h, true, fill) end,
         aspect = function(book)
             local bb = self:coverBB(book.md5)
             return bb and bb:getHeight() / bb:getWidth() or nil
         end,
-    }, "flashui")
+    })
 end
 
 function BlossomView:openDay(date)
     local day = self.loadDay and self:period("day:" .. date, function() return self.loadDay(date) end)
     if not day then return end
-    UIManager:show(BlossomDay:new{
+    Theme.showPage(BlossomDay:new{
         day = day,
         art = function(book, w, h) return self:art(book, w, h, false) end,
         tappable = function(widget, book) return self:tappable(widget, book) end,
-    }, "flashui")
+    })
 end
 
 --- Items of page `key` (per_page at a time) and a pager when there is more than one page.
@@ -543,7 +537,7 @@ function BlossomView:openMore(key)
             empty_text = _("No bookmarks yet ☆"),
         }
     end
-    if page then UIManager:show(page, "flashui") end
+    if page then Theme.showPage(page) end
 end
 
 -- Pages ------------------------------------------------------------------------

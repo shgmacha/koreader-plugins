@@ -227,7 +227,7 @@ def main():
     with open(os.path.join(HOME, "settings.reader.lua"), "w") as f:
         f.write("return {\n"
                 f'  ["home_dir"] = [[{BOOKS}]],\n  ["lastdir"] = [[{BOOKS}]],\n'
-                '  ["quickstart_shown_version"] = 999999999,\n  ["start_with"] = "filemanager",\n  ["color_rendering"] = false,\n'
+                '  ["quickstart_shown_version"] = 999999999999999,\n  ["start_with"] = "filemanager",\n  ["color_rendering"] = false,\n'
                 f'  ["extra_plugin_paths"] = {{ [[{os.path.join(HOME, "plugins")}/]] }},\n'
                 '  ["blossom"] = { ["yearly_goal"] = 12 },\n}\n')
     print("demo library ready:", DEMO)

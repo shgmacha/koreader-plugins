@@ -95,7 +95,7 @@ local stubs = {
         input = { group = { Back = { "Back" }, PgFwd = { "RPgFwd" }, PgBack = { "RPgBack" } } },
     },
     ["ui/uimanager"] = {
-        show = function(_, w) table.insert(shown, w) end,
+        show = function(_, w, _mode, _region, x, y) w.shown_at = { x or 0, y or 0 }; table.insert(shown, w) end,
         close = function(_, w) table.insert(closed, w) end,
         setDirty = function(_, w, mode) table.insert(dirty, mode) end,
         forceRePaint = function() end,
@@ -103,7 +103,14 @@ local stubs = {
     ["gettext"] = setmetatable({}, { __call = function(_, s) return s end }),
     ["logger"] = { warn = function() end, dbg = function() end },
     ["datastorage"] = { getSettingsDir = function() return settings_dir end },
-    ["dispatcher"] = { registerAction = function(_, id, def) dispatched = { id = id, def = def } end },
+    ["dispatcher"] = { registerAction = function(_, id, def)
+        dispatched = dispatched or {}
+        dispatched[id] = def
+    end },
+    ["ffi/util"] = { template = function(s, ...)
+        local args = { ... }
+        return (s:gsub("%%(%d)", function(i) return tostring(args[tonumber(i)]) end))
+    end },
     ["libs/libkoreader-lfs"] = { attributes = function(p) return fs[p] and "file" or nil end },
     ["readhistory"] = { hist = {} },
     ["docsettings"] = {
@@ -308,13 +315,14 @@ test("plugin registers menu and dispatcher action", function()
     resetDB()
     local p = newPlugin()
     eq(registered == p, true)
-    eq(dispatched.id, "blossom_show")
-    eq(dispatched.def.event, "BlossomShow")
+    eq(dispatched.blossom_show.event, "BlossomShow")
+    eq(dispatched.blossom_show_book.event, "BlossomShowBook")
+    eq(dispatched.blossom_show_book.reader, true)
     local items = {}
     p:addToMainMenu(items)
     eq(items.blossom.sorting_hint, "tools")
     assert(items.blossom.text:find("Blossom"))
-    items.blossom.callback()
+    items.blossom.sub_item_table[1].callback()
     eq(getmetatable(shown[#shown]) == BlossomView, true)
     eq(p:onBlossomShow(), true)
 end)
@@ -1473,6 +1481,98 @@ test("long lists show a window of dots and a page count", function()
     for _ = 1, 5 do page:onNextPage() end
     eq(pagerState(page), "4/7") -- the window follows, sprout in the middle
     assert(texts(page):find("6 / " .. total, 1, true))
+end)
+
+local function menu(p)
+    local items = {}
+    p:addToMainMenu(items)
+    local by = {}
+    for _, item in ipairs(items.blossom.sub_item_table) do
+        local label = item.text or item.text_func()
+        by[label:match("^[^:]+")] = item
+    end
+    return by, items
+end
+
+test("settings menu: open as, start on, yearly goal, this book", function()
+    resetDB()
+    local p = newPlugin()
+    local m = menu(p)
+    assert(m["Open Blossom"] and m["This book in Blossom"] and m["Open as"] and m["Start on"] and m["Yearly goal"])
+    eq(m["This book in Blossom"].enabled_func(), false) -- only while reading
+    local open_as = m["Open as"].sub_item_table
+    eq({ open_as[1].checked_func(), open_as[2].checked_func() }, { true, false })
+    open_as[2].callback()
+    eq(G_reader_settings.data.blossom.open_as, "window")
+    eq({ open_as[1].checked_func(), open_as[2].checked_func() }, { false, true })
+    local starts = m["Start on"].sub_item_table
+    eq(#starts, 6)
+    starts[3].callback()
+    eq(G_reader_settings.data.blossom.start_page, "books")
+    eq(menu(p)["Start on"].text_func(), "Start on: My books")
+    eq(m["Yearly goal"].text_func(), "Yearly goal: 12 books")
+    local refreshed = false
+    m["Yearly goal"].callback({ updateItems = function() refreshed = true end })
+    lastOfKind("SpinWidget").callback({ value = 20 })
+    eq({ p:getGoal(), refreshed }, { 20, true })
+end)
+
+test("start page setting picks the first page", function()
+    resetDB()
+    G_reader_settings.data.blossom = { start_page = "year" }
+    local view = openView()
+    eq(view.page, 5)
+end)
+
+test("floating window: centred, bordered, keeps the screen below, tap outside closes", function()
+    resetDB()
+    G_reader_settings.data.blossom = { open_as = "window" }
+    local view = openView()
+    local g = view.geom
+    eq(g.window, true)
+    eq(view.covers_fullscreen, false)
+    eq({ g.outer_w, g.outer_h }, { math.floor(600 * 0.9), math.floor(800 * 0.88) })
+    eq(view.shown_at, { g.x, g.y })
+    eq({ g.x, g.y }, { math.floor((600 - g.outer_w) / 2), math.floor((800 - g.outer_h) / 2) })
+    eq({ view.width, view.height }, { g.outer_w - 4, g.outer_h - 4 }) -- inside the border
+    eq({ view[1].bordersize, view[1].radius }, { 2, 18 })
+    -- pages opened from the window open in the window too
+    view:openBook(2)
+    local detail = shown[#shown]
+    eq({ detail.geom.window, detail.shown_at[1], detail.shown_at[2] }, { true, g.x, g.y })
+    -- a tap inside does nothing, outside closes
+    eq(view:onTapOutside(nil, { pos = { x = g.x + 10, y = g.y + 10 } }), true)
+    assert(closed[#closed] ~= view)
+    view:onTapOutside(nil, { pos = { x = 2, y = 2 } })
+    eq(closed[#closed] == view, true)
+    -- back to full screen
+    G_reader_settings.data.blossom = { open_as = "fullscreen" }
+    local full = openView()
+    eq({ full.geom.window, full.covers_fullscreen, full[1].bordersize }, { false, true, 0 })
+    eq(full.onTapOutside, nil)
+end)
+
+test("this book in Blossom opens the book being read", function()
+    resetDB()
+    local p = newPlugin({ document = {}, statistics = { id_curr_book = 2 } })
+    eq(p:isReading(), true)
+    eq(p:currentBookId(), 2)
+    local m = menu(p)
+    eq(m["This book in Blossom"].enabled_func(), true)
+    m["This book in Blossom"].callback()
+    local detail = shown[#shown]
+    eq(getmetatable(detail) == require("blossom_detail"), true)
+    assert(texts(detail):find("Atomic Habits"))
+    eq(p:onBlossomShowBook(), true)
+    -- starting on the book being read
+    G_reader_settings.data.blossom = { start_page = "current_book" }
+    p:show()
+    eq(getmetatable(shown[#shown]) == require("blossom_detail"), true)
+    -- a book without statistics says so
+    local q = newPlugin({ document = {}, statistics = {}, doc_settings = { readSetting = function() return "nothex!" end } })
+    eq(q:currentBookId(), nil)
+    q:show({ book = true })
+    eq(lastOfKind("InfoMessage").text, "This book has no reading statistics yet ❀")
 end)
 
 H.done()

@@ -346,6 +346,68 @@ function Theme.pager(page, total, on_prev, on_next)
     return row
 end
 
+-- Where Blossom's pages sit: full screen, or a floating window over the bookshelf or book.
+Theme.layout = { window = false }
+Theme.WINDOW_W, Theme.WINDOW_H = 0.9, 0.88
+
+--- Page geometry: content size (w, h), outer size and position.
+function Theme.pageGeometry()
+    local sw, sh = Screen:getWidth(), Screen:getHeight()
+    if not Theme.layout.window then
+        return { x = 0, y = 0, w = sw, h = sh, outer_w = sw, outer_h = sh, window = false, border = 0 }
+    end
+    local ow, oh = math.floor(sw * Theme.WINDOW_W), math.floor(sh * Theme.WINDOW_H)
+    local b = Size.border.thick
+    return { x = math.floor((sw - ow) / 2), y = math.floor((sh - oh) / 2), w = ow - 2 * b, h = oh - 2 * b,
+             outer_w = ow, outer_h = oh, window = true, border = b }
+end
+
+--- Sets a page widget's size and area; a window doesn't cover what's underneath.
+function Theme.initPage(page)
+    local g = Theme.pageGeometry()
+    page.geom = g
+    page.width, page.height = g.w, g.h
+    page.dimen = Geom:new{ x = g.x, y = g.y, w = g.outer_w, h = g.outer_h }
+    page.covers_fullscreen = not g.window
+end
+
+--- In a window, tapping outside it closes it (call after setting ges_events).
+function Theme.addWindowGestures(page)
+    if not page.geom.window or not require("device"):isTouchDevice() then return end
+    page.ges_events = page.ges_events or {}
+    page.ges_events.TapOutside = {
+        GestureRange:new{ ges = "tap", range = Geom:new{ x = 0, y = 0, w = Screen:getWidth(), h = Screen:getHeight() } },
+    }
+    page.onTapOutside = function(self, _, ges)
+        local g, p = self.geom, ges and ges.pos
+        if p and (p.x < g.x or p.x > g.x + g.outer_w or p.y < g.y or p.y > g.y + g.outer_h) then
+            return self:onClose()
+        end
+        return true
+    end
+end
+
+--- A page's outer frame: plain for full screen, a rounded bordered window otherwise.
+function Theme.pageFrame(page, content)
+    local g = page.geom
+    return FrameContainer:new{
+        width = g.outer_w,
+        height = g.outer_h,
+        background = Theme.bg,
+        bordersize = g.border,
+        radius = g.window and Theme.px(18) or nil,
+        color = Theme.ink,
+        padding = 0,
+        margin = 0,
+        content,
+    }
+end
+
+--- Shows a page in its place (full screen, or centred as a window).
+function Theme.showPage(page)
+    require("ui/uimanager"):show(page, "flashui", nil, page.geom.x, page.geom.y)
+end
+
 --- Width left for content inside a default Theme.card.
 function Theme.cardInner(w)
     return w - 2 * (Size.padding.default + Size.border.thin)
