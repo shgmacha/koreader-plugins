@@ -217,6 +217,7 @@ function BlossomView:init()
     self.year, self.month = now.year, now.month
     self.periods = {}
     self.cover_bbs = {}
+    self.sub_page = {} -- current page of each paged gallery on the dashboard
 
     if Device:isTouchDevice() then
         self.ges_events = {
@@ -458,6 +459,19 @@ function BlossomView:openDay(date)
     }, "flashui")
 end
 
+--- Items of page `key` (per_page at a time) and a pager when there is more than one page.
+function BlossomView:pageOf(key, items, per_page)
+    local pages = math.max(1, math.ceil(#items / per_page))
+    local page = math.min(self.sub_page[key] or 1, pages)
+    self.sub_page[key] = page
+    local slice = {}
+    for i = (page - 1) * per_page + 1, math.min(#items, page * per_page) do slice[#slice + 1] = items[i] end
+    local pager = pages > 1 and Theme.pager(page, pages,
+        function() self.sub_page[key] = page - 1; self:refresh() end,
+        function() self.sub_page[key] = page + 1; self:refresh() end) or nil
+    return slice, pager
+end
+
 --- The garden's "tell me more" pages.
 function BlossomView:openMore(key)
     local s = self.stats
@@ -629,13 +643,14 @@ function BlossomView:build_week()
         table.insert(group, text(_("No books yet this week ❀"), Theme.face("script", 16), { color = Theme.soft_ink }))
         return group
     end
-    local shown = math.min(WEEK_TILES, week.books)
-    local avail = self.content_h - heightOf(group) - px(24)
+    local list, pager = self:pageOf("week", week.list, WEEK_TILES)
+    local shown = #list
+    local avail = self.content_h - heightOf(group) - px(24) - (pager and px(44) or 0)
     local cover_w, cover_h = self:coverSize(WEEK_TILES, gap, avail)
     if cover_h < px(50) then
         -- Too little room for covers: a sweet list instead.
         for i = 1, shown do
-            local b = week.list[i]
+            local b = list[i]
             table.insert(group, self:tappable(text(string.format("%s %s · %s", Theme.flower, b.title,
                 Data.fmtDuration(b.seconds)), Theme.face("script", 16), { max_width = self.inner_w }), b))
         end
@@ -653,14 +668,14 @@ function BlossomView:build_week()
                 color = Theme.petal,
                 background = Theme.bg,
                 outside = Theme.bg,
-                self:art(week.list[i], cover_w, cover_h, true, true),
-            }, week.list[i]))
+                self:art(list[i], cover_w, cover_h, true, true),
+            }, list[i]))
         end
         table.insert(group, row)
     end
-    if week.books > shown then
-        table.insert(group, text(string.format(_("+%d more %s"), week.books - shown, Theme.open_heart),
-            Theme.face("script", 14), { color = Theme.soft_ink }))
+    if pager then
+        table.insert(group, vspan(6))
+        table.insert(group, pager)
     end
     return group
 end
@@ -695,10 +710,22 @@ function BlossomView:build_books()
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
-    -- A touch smaller than the full page, centred, so the gallery can breathe.
+    -- Every book, 8 to a page; a touch smaller than the full page, centred, so it can breathe.
+    local all = self.loadBooks and self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
+    if not all or #all == 0 then all = s.recent end
+    local slice, pager = self:pageOf("books", all, SHELF_COLS * SHELF_ROWS)
+    local pager_h = pager and px(44) or 0
+    local shelf = VerticalGroup:new{
+        align = "center",
+        self:galleryGrid(slice, floor((self.content_h - pager_h) * 0.86), SHELF_COLS, SHELF_ROWS),
+    }
+    if pager then
+        table.insert(shelf, vspan(10))
+        table.insert(shelf, pager)
+    end
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },
-        self:galleryGrid(s.recent, floor(self.content_h * 0.86), SHELF_COLS, SHELF_ROWS),
+        shelf,
     }
 end
 
@@ -930,13 +957,12 @@ function BlossomView:build_month()
         return group
     end
 
-    local shown = math.min(BOOK_COLS * BOOK_ROWS, month.books)
-    local more_h = month.books > shown and px(28) or 0
-    table.insert(group, self:galleryGrid(month.list, floor((self.content_h - heightOf(group) - more_h) * 0.94)))
-    if month.books > shown then
+    local list, pager = self:pageOf("month:" .. key, month.list, BOOK_COLS * BOOK_ROWS)
+    local pager_h = pager and px(44) or 0
+    table.insert(group, self:galleryGrid(list, floor((self.content_h - heightOf(group) - pager_h) * 0.94)))
+    if pager then
         table.insert(group, vspan(6))
-        table.insert(group, text(string.format(_("+%d more %s"), month.books - shown, Theme.open_heart),
-            Theme.face("script", 16), { color = Theme.soft_ink }))
+        table.insert(group, pager)
     end
     return group
 end

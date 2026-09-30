@@ -259,6 +259,24 @@ local function count(w, kind)
     return n
 end
 
+-- Reads a dots pager (‹ • 🌱 • ›) under `root`: returns "page/total", or nil when there is none.
+local function pagerState(root)
+    local found
+    walk(root, function(n)
+        if found or n.kind ~= "HorizontalGroup" then return end
+        local first = n[1]
+        if not (first and first.text == "‹" and first.width == 44) then return end
+        local dots = n[3]
+        local page, total = nil, 0
+        for _, c in ipairs(dots) do
+            if c.text == "●" then total = total + 1 end
+            if c.file and c.file:find("sprout") then total = total + 1; page = total end
+        end
+        found = string.format("%d/%d", page or 0, total)
+    end)
+    return found
+end
+
 local function bows(w)
     local n = 0
     walk(w, function(x) if x.kind == "ImageWidget" and x.file and x.file:find("icons/bow.svg$") then n = n + 1 end end)
@@ -388,6 +406,7 @@ test("books gallery shows at most 8 covers, 4 per row", function()
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 8)
+    eq(pagerState(view), "1/2") -- 9 books: two pages
     local rows = 0
     walk(view, function(n)
         if n.kind == "HorizontalGroup" then
@@ -422,7 +441,7 @@ test("month page: covers grid, navigation, no future months", function()
     assert(texts(view):find("No blooms this month"))
 end)
 
-test("month is a My-books-style gallery: 6 framed tiles and +N more", function()
+test("month is a My-books-style gallery: 6 framed tiles per page, paged", function()
     resetDB()
     db.period = function()
         local list = {}
@@ -434,9 +453,23 @@ test("month is a My-books-style gallery: 6 framed tiles and +N more", function()
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 6)
-    assert(texts(view):find("+6 more"))
+    eq(pagerState(view), "1/2")
     -- most-read first, with title and "% · time" like My books
     assert(texts(view):find("Book 12\n10%% · 20m"), texts(view))
+    local function pagerArrow(glyph)
+        local found
+        walk(view, function(n) if n.text == glyph and n.enabled ~= nil and n.width == 44 then found = n end end)
+        return found
+    end
+    pagerArrow("›").callback()
+    tiles = 0
+    walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
+    eq(tiles, 6)
+    eq(pagerState(view), "2/2")
+    assert(texts(view):find("Book 6\n"), texts(view))
+    eq(pagerArrow("›").enabled, false)
+    pagerArrow("‹").callback()
+    eq(pagerState(view), "1/2")
 end)
 
 test("paging wraps both ways and swipes/keys navigate or close", function()
@@ -856,9 +889,29 @@ test("day page: empty notes and many highlights", function()
     view = openView()
     page = openToday(view)
     t = texts(page)
-    assert(t:find("quote 1"), t)
-    assert(t:find("more highlights"), t)
+    assert(t:find("quote 1”", 1, true), t)
     assert(not t:find("quote 30"), t)
+    local state = pagerState(page)
+    local total = tonumber(state:match("/(%d+)"))
+    eq(state, "1/" .. total)
+    for _ = 2, total do page:onSwipe(nil, { direction = "west" }) end
+    assert(texts(page):find("quote 30”", 1, true), "the last page reaches the last highlight")
+    assert(texts(page):find("^Blossom\n.-\nhighlights\n“"), "each page keeps its section title")
+end)
+
+test("day page: many books page four at a time", function()
+    resetDB()
+    db.period = function()
+        local list = {}
+        for i = 1, 6 do list[i] = book("D" .. i, "d" .. i, 100 * (7 - i), 100, 10) end
+        return cols(list)
+    end
+    local page = openToday(openView())
+    local state = pagerState(page)
+    eq(state, "1/2")
+    page.books_page = 2
+    page:refresh()
+    eq(pagerState(page), "2/2")
 end)
 
 test("day page survives unreadable sidecars and old bookmark format", function()
@@ -1105,7 +1158,7 @@ test("book details show snippet, highlights and bookmark count from the sidecar"
     eq(bows(shown[#shown]), 1) -- finished
 end)
 
-test("book details: many highlights are capped with +N more", function()
+test("book details: many highlights are paged with dots", function()
     resetDB()
     db.book = function()
         return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
@@ -1115,10 +1168,22 @@ test("book details: many highlights are capped with +N more", function()
     db.sidecar = { ["/books/a.epub"] = { annotations = many } }
     local view = openView()
     view:openBook(1)
-    local t = texts(shown[#shown])
-    assert(t:find("quote 1"), t)
-    assert(t:find("more highlights"), t)
+    local detail = shown[#shown]
+    local t = texts(detail)
+    assert(t:find("quote 1”", 1, true), t)
     assert(not t:find("quote 25"), t)
+    local state = pagerState(detail)
+    local total = tonumber(state:match("/(%d+)"))
+    eq(state, "1/" .. total)
+    assert(total >= 2)
+    detail:onSwipe(nil, { direction = "west" })
+    eq(pagerState(detail), "2/" .. total)
+    assert(not texts(detail):find("quote 1”", 1, true))
+    for _ = 1, total do detail:turnHighlights(1) end
+    eq(pagerState(detail), total .. "/" .. total)
+    assert(texts(detail):find("quote 25”", 1, true), "the last page reaches the last highlight")
+    detail:onSwipe(nil, { direction = "east" })
+    eq(pagerState(detail), (total - 1) .. "/" .. total)
 end)
 
 test("calendar day cells keep their full size", function()
@@ -1152,7 +1217,7 @@ test("book details always show at least one highlight", function()
     local t = texts(shown[#shown])
     assert(t:find("“long", 1, true), t)
     assert(not t:find("✎ note", 1, true), "the shortened first highlight drops its note")
-    assert(t:find("+1 more highlights"), t)
+    eq(pagerState(shown[#shown]), "1/2")
 end)
 
 test("every page uses the same side margins", function()
@@ -1211,13 +1276,13 @@ test("garden book pages are galleries: books, time, pages", function()
     local tiles = 0
     walk(more, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 8) -- first page of 10
-    assert(t:find("1 / 2"), t)
+    eq(pagerState(more), "1/2")
     eq(db.last_order, "last_open DESC")
     more:onNextPage()
     tiles = 0
     walk(more, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 2)
-    assert(texts(more):find("2 / 2"))
+    eq(pagerState(more), "2/2")
     more:onNextPage() -- no page 3
     eq(more.page, 2)
 
@@ -1254,7 +1319,7 @@ test("highlights and bookmarks pages are lists with the book they're from, paged
     local hl = gardenTap(view, "highlight")
     local t = texts(hl)
     assert(t:find("My highlights"), t)
-    assert(t:find("\n1 / 1\n", 1, true), t) -- a single page knows it is the last
+    eq(pagerState(hl), nil) -- a single page needs no pager
     assert(t:find("“A quote.”", 1, true), t)
     assert(t:find("Anathema · p. 5 · 15 Sep 2026", 1, true), t)
     assert(t:find("✎ aww", 1, true), t)
@@ -1355,6 +1420,59 @@ test("bookmarks page lists bookmarks and highlights together, newest first", fun
     local b1 = t:find("p. 4 · One", 1, true)
     assert(q and b2 and b1 and q < b2 and b2 < b1, t)
     assert(t:find("Anathema · p. 9 · 3 Sep 2026", 1, true), t)
+end)
+
+test("week covers page 4 at a time", function()
+    resetDB()
+    db.period = function()
+        local list = {}
+        for i = 1, 6 do list[i] = book("W" .. i, "a" .. i, 100 * (7 - i), 100, 10) end
+        return cols(list)
+    end
+    local view = openView()
+    view:goToPage(2)
+    local t = texts(view)
+    eq(pagerState(view), "1/2")
+    assert(not t:find("more"), "no +N more any more")
+    view.sub_page.week = 2
+    view:refresh()
+    eq(pagerState(view), "2/2")
+end)
+
+test("highlight text keeps its own quotes out of ours", function()
+    resetDB()
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = {
+        { datetime = "2026-09-03 10:00:00", drawer = "lighten", text = '"Already quoted."', pageno = 9 },
+        { datetime = "2026-09-04 10:00:00", drawer = "lighten", text = "“Curly too”", pageno = 10 },
+    } } }
+    local view = openView()
+    view:openMore("highlights")
+    local t = texts(shown[#shown])
+    assert(t:find('“Already quoted.”', 1, true), t)
+    assert(t:find('“Curly too”', 1, true), t)
+    assert(not t:find('“"', 1, true) and not t:find("““", 1, true), "no doubled marks")
+    local q
+    walk(shown[#shown], function(n) if n.text == "“Curly too”" then q = n end end)
+    eq(q.face.size, 15) -- smaller type on the highlights page
+end)
+
+test("long lists show a window of dots and a page count", function()
+    resetDB()
+    local many = {}
+    for i = 1, 200 do
+        many[i] = { datetime = string.format("2026-09-%02d %02d:%02d:00", 1 + i % 28, i % 24, i % 60), text = "bm", pageno = i }
+    end
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = many } }
+    local view = openView()
+    view:openMore("bookmarks")
+    local page = shown[#shown]
+    local total = page:pageCount()
+    assert(total > 9, total)
+    eq(pagerState(page), "1/7") -- seven dots shown, sprout on the first
+    assert(texts(page):find("1 / " .. total, 1, true))
+    for _ = 1, 5 do page:onNextPage() end
+    eq(pagerState(page), "4/7") -- the window follows, sprout in the middle
+    assert(texts(page):find("6 / " .. total, 1, true))
 end)
 
 H.done()

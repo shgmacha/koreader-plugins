@@ -4,13 +4,10 @@ a paged cover gallery for books, or paged lists for highlights and bookmarks.
 --]]
 
 local BottomContainer = require("ui/widget/container/bottomcontainer")
-local Button = require("ui/widget/button")
 local Device = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
-local HorizontalGroup = require("ui/widget/horizontalgroup")
-local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
@@ -42,7 +39,7 @@ function BlossomMore:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
     self.inner_w = self.width - 2 * px(Theme.MARGIN)
-    self.starts = { 1 } -- first item of each list page, found while paging forward
+    self.starts = { 1 } -- first item of each list page
     if Device:isTouchDevice() then
         self.ges_events = { Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } } }
     end
@@ -64,12 +61,11 @@ function BlossomMore:pageCount()
     if self.kind == "gallery" then
         return math.max(1, math.ceil(#self.items / GALLERY_PER_PAGE))
     end
-    return nil -- lists: only known once paged through
+    return self.starts and #self.starts or 1
 end
 
 function BlossomMore:hasNext()
-    if self.kind == "gallery" then return self.page < self:pageCount() end
-    return self.starts[self.page + 1] ~= nil and self.starts[self.page + 1] <= #self.items
+    return self.page < self:pageCount()
 end
 
 function BlossomMore:bookmarkRow(b)
@@ -79,8 +75,8 @@ function BlossomMore:bookmarkRow(b)
     if #first == 0 then first[1] = _("bookmark") end
     return VerticalGroup:new{
         align = "left",
-        text(Theme.star .. "  " .. table.concat(first, " · "), Theme.face("script", 16), { max_width = self.inner_w }),
-        muted("     " .. b.title .. " · " .. (b.date or ""), 13, self.inner_w),
+        text(Theme.star .. "  " .. table.concat(first, " · "), Theme.face("script", 15), { max_width = self.inner_w }),
+        muted("     " .. b.title .. " · " .. (b.date or ""), 12, self.inner_w),
     }
 end
 
@@ -88,56 +84,29 @@ function BlossomMore:quoteRow(h)
     local meta = { h.title }
     if h.page then meta[#meta + 1] = string.format(_("p. %d"), h.page) end
     meta[#meta + 1] = h.date
-    return Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 4)
+    return Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 4, 15)
 end
 
---- Fills one list page from self.starts[page], remembering where the next one begins.
+function BlossomMore:makeRow(item)
+    return (self.kind == "highlights" or item.kind == "highlight") and self:quoteRow(item) or self:bookmarkRow(item)
+end
+
+--- One list page; all page breaks are worked out the first time, so the pager knows the count.
 function BlossomMore:listPage(avail_h)
-    local group = VerticalGroup:new{ align = "left" }
-    local i = self.starts[self.page]
-    local gap = px(self.kind == "highlights" and 18 or 14)
-    while i <= #self.items do
-        local item = self.items[i]
-        local row = (self.kind == "highlights" or item.kind == "highlight") and self:quoteRow(item) or self:bookmarkRow(item)
-        local h = group:getSize().h
-        group:resetLayout()
-        local needed = row:getSize().h + (#group > 0 and gap or 0)
-        if h + needed > avail_h and #group > 0 then
-            row:free()
-            break
-        end
-        if #group > 0 then table.insert(group, vspan(self.kind == "highlights" and 18 or 14)) end
-        table.insert(group, row)
-        i = i + 1
+    local gap = px(self.kind == "highlights" and 16 or 12)
+    local make_row = function(item) return self:makeRow(item) end
+    if not self.list_starts_done then
+        self.starts = Theme.pageStarts(self.items, avail_h, make_row, gap)
+        self.list_starts_done = true
     end
-    self.starts[self.page + 1] = i
-    return group
+    return (Theme.fillPage(self.items, self.starts[self.page], avail_h, make_row, gap))
 end
 
 function BlossomMore:buildFooter()
-    local count = self:pageCount() or (not self:hasNext() and self.page or nil)
-    local label = count and string.format("%d / %d", self.page, count) or tostring(self.page)
-    local function arrow(glyph, enabled, fn)
-        return Button:new{
-            text = glyph,
-            bordersize = 0,
-            width = px(56),
-            text_font_size = 24,
-            enabled = enabled,
-            callback = fn,
-            show_parent = self,
-        }
-    end
+    if self:pageCount() <= 1 then return VerticalGroup:new{ vspan(6) } end
     return VerticalGroup:new{
         align = "center",
-        HorizontalGroup:new{
-            align = "center",
-            arrow("‹", self.page > 1, function() self:onPrevPage() end),
-            HorizontalSpan:new{ width = px(12) },
-            text(label, Theme.face("script", 15), { color = Theme.soft_ink }),
-            HorizontalSpan:new{ width = px(12) },
-            arrow("›", self:hasNext(), function() self:onNextPage() end),
-        },
+        Theme.pager(self.page, self:pageCount(), function() self:onPrevPage() end, function() self:onNextPage() end),
         vspan(6),
     }
 end

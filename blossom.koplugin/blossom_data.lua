@@ -498,6 +498,25 @@ end
 
 Data.annotationsForDay = Data.annotations
 
+-- Quote marks a highlight may already carry (straight, curly, guillemets, low-9).
+local QUOTE_MARKS = { '"', "'", "“", "”", "‘", "’", "«", "»", "„", "‚", "‹", "›", "「", "」", "『", "』" }
+
+--- Highlight text without its own surrounding quote marks (Blossom adds “ ” itself).
+function Data.cleanQuote(text)
+    if type(text) ~= "string" then return "" end
+    local s = text:gsub("^%s+", ""):gsub("%s+$", "")
+    local changed = true
+    while changed and #s > 0 do
+        changed = false
+        for _, q in ipairs(QUOTE_MARKS) do
+            if s:sub(1, #q) == q then s = s:sub(#q + 1); changed = true end
+            if #s >= #q and s:sub(-#q) == q then s = s:sub(1, -#q - 1); changed = true end
+        end
+        s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    return s
+end
+
 --- A short plain-text snippet from a book description (often HTML).
 function Data.snippet(description, max_chars)
     if type(description) ~= "string" then return end

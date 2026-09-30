@@ -11,6 +11,8 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local BottomContainer = require("ui/widget/container/bottomcontainer")
+local OverlapGroup = require("ui/widget/overlapgroup")
 local LineWidget = require("ui/widget/linewidget")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -117,58 +119,52 @@ function BlossomDay:build()
     if day.books == 0 then
         add(muted(_("No reading this day ❀"), 16))
     else
-        add(self:coverRow(day.list))
-        if day.books > MAX_BOOKS then
-            add(muted(string.format(_("+%d more %s"), day.books - MAX_BOOKS, Theme.open_heart), 14))
+        -- Books four at a time, with a pager when there are more.
+        local pages = math.ceil(day.books / MAX_BOOKS)
+        self.books_page = math.min(self.books_page or 1, pages)
+        local slice = {}
+        for i = (self.books_page - 1) * MAX_BOOKS + 1, math.min(day.books, self.books_page * MAX_BOOKS) do
+            slice[#slice + 1] = day.list[i]
+        end
+        add(self:coverRow(slice))
+        if pages > 1 then
+            add(vspan(4))
+            add(Theme.pager(self.books_page, pages,
+                function() self.books_page = self.books_page - 1; self:refresh() end,
+                function() self.books_page = self.books_page + 1; self:refresh() end))
         end
     end
     add(VerticalSpan:new{ width = gap })
 
-    if #notes.highlights == 0 and #notes.bookmarks == 0 then
+    -- Highlights, then bookmarks, as one paged list; each section keeps its title.
+    local items = {}
+    for _, h in ipairs(notes.highlights) do items[#items + 1] = { section = "highlights", note = h } end
+    for _, b in ipairs(notes.bookmarks) do items[#items + 1] = { section = "bookmarks", note = b } end
+    local pager
+    if #items == 0 then
         add(Theme.rule(_("notes"), self.inner_w))
         add(vspan(8))
         add(muted(_("No highlights or bookmarks — just quiet reading ♡"), 16, self.inner_w))
-    end
-
-    -- Bookmarks are one-liners, so keep their room before adding highlights.
-    local bm_lines = math.min(#notes.bookmarks, 3)
-    local line_h = muted("x", 15):getSize().h
-    local bookmarks_h = #notes.bookmarks > 0 and (line_h * (bm_lines + 2) + gap * 2) or 0
-
-    if #notes.highlights > 0 then
-        add(Theme.rule(_("highlights"), self.inner_w))
-        add(vspan(10))
-        local shown = 0
-        for i, h in ipairs(notes.highlights) do
-            local q = self:quote(h, 4)
-            if q:getSize().h + px(14) > room() - bookmarks_h then break end
-            if i > 1 then add(vspan(14)) end
-            add(q)
-            shown = i
+    else
+        local avail = room() - px(50)
+        local make_row = function(item, _idx, prev)
+            local row = item.section == "highlights" and self:quote(item.note, 4) or self:bookmarkRow(item.note)
+            if prev and prev.section == item.section then return row end
+            return VerticalGroup:new{
+                align = "center",
+                Theme.rule(item.section == "highlights" and _("highlights") or _("bookmarks"), self.inner_w),
+                vspan(10),
+                row,
+            }
         end
-        if shown < #notes.highlights then
-            add(vspan(6))
-            add(muted(string.format(_("+%d more highlights %s"), #notes.highlights - shown, Theme.open_heart), 14))
+        if not self.note_starts then
+            self.note_starts = Theme.pageStarts(items, avail, make_row, px(14))
         end
-        add(VerticalSpan:new{ width = gap })
-    end
-
-    if #notes.bookmarks > 0 then
-        add(Theme.rule(_("bookmarks"), self.inner_w))
-        add(vspan(8))
-        for i = 1, bm_lines do
-            local b = notes.bookmarks[i]
-            local parts = {}
-            if b.page then parts[#parts + 1] = string.format(_("p. %d"), b.page) end
-            if b.chapter then parts[#parts + 1] = b.chapter end
-            parts[#parts + 1] = b.title
-            parts[#parts + 1] = b.time
-            add(text(Theme.star .. "  " .. table.concat(parts, " · "), Theme.face("script", 15),
-                { max_width = self.inner_w }))
-            add(vspan(4))
-        end
-        if #notes.bookmarks > bm_lines then
-            add(muted(string.format(_("+%d more %s"), #notes.bookmarks - bm_lines, Theme.star), 14))
+        self.note_page = math.min(self.note_page or 1, #self.note_starts)
+        add((Theme.fillPage(items, self.note_starts[self.note_page], avail, make_row, px(14))))
+        if #self.note_starts > 1 then
+            pager = Theme.pager(self.note_page, #self.note_starts,
+                function() self:turnNotes(-1) end, function() self:turnNotes(1) end)
         end
     end
 
@@ -179,17 +175,50 @@ function BlossomDay:build()
         background = Theme.bg,
         bordersize = 0,
         padding = 0,
-        VerticalGroup:new{
-            align = "center",
-            header,
-            vspan(Theme.TOP_GAP),
-            content,
+        OverlapGroup:new{
+            dimen = Geom:new{ w = self.width, h = self.height },
+            VerticalGroup:new{
+                align = "center",
+                header,
+                vspan(Theme.TOP_GAP),
+                content,
+            },
+            pager and BottomContainer:new{
+                dimen = Geom:new{ w = self.width, h = self.height },
+                VerticalGroup:new{ align = "center", pager, vspan(6) },
+            } or nil,
         },
     }
 end
 
+function BlossomDay:bookmarkRow(b)
+    local parts = {}
+    if b.page then parts[#parts + 1] = string.format(_("p. %d"), b.page) end
+    if b.chapter then parts[#parts + 1] = b.chapter end
+    parts[#parts + 1] = b.title
+    parts[#parts + 1] = b.time
+    return text(Theme.star .. "  " .. table.concat(parts, " · "), Theme.face("script", 15), { max_width = self.inner_w })
+end
+
+function BlossomDay:refresh()
+    self:build()
+    UIManager:setDirty(self, "flashui")
+end
+
+function BlossomDay:turnNotes(delta)
+    local page = (self.note_page or 1) + delta
+    if page < 1 or page > #(self.note_starts or { 1 }) then return end
+    self.note_page = page
+    self:refresh()
+end
+
 function BlossomDay:onSwipe(_, ges)
-    if ges.direction == "south" or ges.direction == "east" then return self:onClose() end
+    if ges.direction == "west" then self:turnNotes(1); return true end
+    if ges.direction == "east" then
+        if (self.note_page or 1) > 1 then self:turnNotes(-1); return true end
+        return self:onClose()
+    end
+    if ges.direction == "south" then return self:onClose() end
     return true
 end
 

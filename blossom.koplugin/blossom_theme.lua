@@ -176,14 +176,16 @@ end
 
 --- A quote with a soft bar on its left: “text”, a small gray `meta` line, then the reader's note.
 --- Short quotes take their natural height; long ones stop at `max_lines` with an ellipsis.
-function Theme.quote(quote_text, meta, note, width, max_lines)
+function Theme.quote(quote_text, meta, note, width, max_lines, size)
     local TextBoxWidget = require("ui/widget/textboxwidget")
+    size = size or 17
     local bar_w, pad = Theme.px(3), Theme.px(12)
     local inner = width - bar_w - pad
-    local face = Theme.face("script", 17)
+    local face = Theme.face("script", size)
     local function box(height)
         return TextBoxWidget:new{
-            text = "“" .. (quote_text or "") .. "”",
+            -- the highlight's own quote marks are dropped so they don't double up with ours
+            text = "“" .. require("blossom_data").cleanQuote(quote_text) .. "”",
             face = face,
             width = inner,
             height = height,
@@ -201,11 +203,11 @@ function Theme.quote(quote_text, meta, note, width, max_lines)
         align = "left",
         quote,
         Theme.vspan(2),
-        Theme.text(meta, Theme.face("script", 13), { color = Theme.soft_ink, max_width = inner }),
+        Theme.text(meta, Theme.face("script", size - 4), { color = Theme.soft_ink, max_width = inner }),
     }
     if note then
         table.insert(body, Theme.vspan(2))
-        table.insert(body, Theme.text("✎ " .. note, Theme.face("script", 15), { max_width = inner }))
+        table.insert(body, Theme.text("✎ " .. note, Theme.face("script", size - 2), { max_width = inner }))
     end
     local bar = LineWidget:new{
         background = Theme.shades[3],
@@ -270,6 +272,78 @@ end
 function Theme.Tappable:onTap()
     if self.callback then self.callback() end
     return true
+end
+
+--- Fills one page of a list: rows from items[start] while they fit in avail_h (always at least one).
+--- make_row(item, index, previous_item_on_page) -> widget. Returns the group and the next start index.
+function Theme.fillPage(items, start, avail_h, make_row, gap)
+    local group = VerticalGroup:new{ align = "left" }
+    local i, prev = start, nil
+    gap = gap or Theme.px(14)
+    while i <= #items do
+        local row = make_row(items[i], i, prev)
+        local h = group:getSize().h
+        group:resetLayout()
+        if #group > 0 and h + gap + row:getSize().h > avail_h then
+            row:free()
+            break
+        end
+        if #group > 0 then table.insert(group, VerticalSpan:new{ width = gap }) end
+        table.insert(group, row)
+        prev = items[i]
+        i = i + 1
+    end
+    return group, i
+end
+
+--- Where each page of a list starts, found by filling pages one after another.
+function Theme.pageStarts(items, avail_h, make_row, gap)
+    local starts, i = { 1 }, 1
+    while i <= #items do
+        local group, next_i = Theme.fillPage(items, i, avail_h, make_row, gap)
+        group:free()
+        i = next_i
+        if i <= #items then starts[#starts + 1] = i end
+    end
+    return starts
+end
+
+--- The pager used everywhere: ‹  • • 🌱 • •  › — soft dots, a sprout for the current page.
+--- Long runs show a window of dots around the current page plus a small "12 / 40".
+Theme.PAGER_DOTS = 9
+function Theme.pager(page, total, on_prev, on_next)
+    local Button = require("ui/widget/button")
+    local function arrow(glyph, enabled, fn)
+        return Button:new{ text = glyph, bordersize = 0, width = Theme.px(44), text_font_size = 22,
+                           enabled = enabled, callback = fn }
+    end
+    local first, last = 1, total
+    if total > Theme.PAGER_DOTS then
+        first = math.max(1, math.min(page - 3, total - 6))
+        last = first + 6
+    end
+    local dots = HorizontalGroup:new{ align = "center" }
+    for i = first, last do
+        if i > first then table.insert(dots, HorizontalSpan:new{ width = Theme.px(10) }) end
+        if i == page then
+            table.insert(dots, Theme.icon("sprout", 20))
+        else
+            table.insert(dots, Theme.text("●", Theme.face("ui", 9), { color = Theme.shades[3] }))
+        end
+    end
+    local row = HorizontalGroup:new{
+        align = "center",
+        arrow("‹", page > 1, on_prev),
+        HorizontalSpan:new{ width = Theme.px(12) },
+        dots,
+        HorizontalSpan:new{ width = Theme.px(12) },
+        arrow("›", page < total, on_next),
+    }
+    if total > Theme.PAGER_DOTS then
+        table.insert(row, HorizontalSpan:new{ width = Theme.px(4) })
+        table.insert(row, Theme.text(string.format("%d / %d", page, total), Theme.face("script", 12), { color = Theme.soft_ink }))
+    end
+    return row
 end
 
 --- Width left for content inside a default Theme.card.

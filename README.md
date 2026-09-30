@@ -56,7 +56,7 @@ marks the current page.
 
 <img src="docs/screenshots/3-books.png" width="300" align="right" alt="My books">
 
-- A 4×2 gallery of your 8 most recent books.
+- Every book you've read, most recent first, 8 per page (4×2).
 - Each cover sits edge to edge in a rounded frame, with its title, **% read** and **time spent** below.
 - Finished books get a little 🎀 bow.
 
@@ -116,6 +116,8 @@ Tap a day in the calendar to see:
 
 ### Getting around
 
+- **Paging:** every gallery and list pages the same way: soft dots, a little sprout for the page
+  you're on, and ‹ › either side. Long lists show a window of dots plus a small "12 / 40".
 - **Close:** swipe down, press Back, or tap the little flower **×** at the top-left.
 - **Go back:** pages you open from the dashboard have a flower **‹** in the same spot.
 
