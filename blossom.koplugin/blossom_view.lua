@@ -76,39 +76,7 @@ function Bar:paintTo(bb, x, y)
     end
 end
 
---- The yearly goal as a wavy line: bold and solid up to where you are, soft and dotted after.
-local GoalWave = Widget:extend{
-    width = 0,
-    height = 0,
-    ratio = 0,
-    mid = 0,        -- y of the wave's centre line
-    amplitude = 6,
-    period = 48,
-}
-
---- Wave height at x (relative to the widget's top).
-function GoalWave:waveY(x)
-    return self.mid + self.amplitude * math.sin(2 * math.pi * x / self.period)
-end
-
-function GoalWave:getSize()
-    return Geom:new{ w = self.width, h = self.height }
-end
-
-function GoalWave:paintTo(bb, x, y)
-    self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
-    local done_w = floor(self.width * self.ratio + 0.5)
-    local thick, thin = Theme.px(4), Theme.px(2)
-    local dot = Theme.px(5)
-    for dx = 0, self.width - 1 do
-        local wy = floor(self:waveY(dx) + 0.5)
-        if dx <= done_w and self.ratio > 0 then
-            bb:paintRect(x + dx, y + wy - floor(thick / 2), 1, thick, Theme.accent)
-        elseif floor(dx / dot) % 2 == 0 then
-            bb:paintRect(x + dx, y + wy - floor(thin / 2), 1, thin, Theme.shades[3])
-        end
-    end
-end
+local GoalWave = Theme.GoalWave
 
 local RoundedFrame = Theme.RoundedFrame
 
@@ -281,19 +249,6 @@ function BlossomView:emptyState(message)
     }
 end
 
-function BlossomView:smallButton(label, callback)
-    return Button:new{
-        text = label,
-        bordersize = Size.border.thin,
-        radius = px(14),
-        text_font_face = "cfont",
-        text_font_size = 16,
-        text_font_bold = false,
-        callback = callback,
-        show_parent = self,
-    }
-end
-
 -- Covers ---------------------------------------------------------------------
 
 --- Cover blitbuffers are cached for the view's lifetime and freed on close.
@@ -451,52 +406,28 @@ function BlossomView:build_overview()
             and _("Couldn't open your reading statistics. Is the Statistics plugin enabled? ♡")
             or _("Your garden is waiting to bloom ❀\nStart reading and your stats will grow here."))
     end
-    -- A narrower, lighter grid centred on the page, with room around it.
-    local gap = px(14)
-    local grid_w = math.min(self.inner_w, px(520))
-    local card_w = floor((grid_w - gap) / 2)
-    local inner = cardInner(card_w)
-    local greeting = text(Data.greeting(self.hour), Theme.face("script", 21))
-    local pill = Theme.card(CenterContainer:new{
-        dimen = Geom:new{ w = cardInner(grid_w), h = px(30) },
-        text(Data.affirmation(s.today), Theme.face("script", 16), { max_width = cardInner(grid_w) }),
-    }, { radius = px(16) })
-    local longest = text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
-        Theme.face("script", 15), { color = Theme.soft_ink })
-
-    local fixed = greeting:getSize().h + pill:getSize().h + longest:getSize().h + gap * 6
-    local card_h = math.min(px(62), floor((self.content_h - fixed) / 3) - 2 * (Size.padding.default + Size.border.thin))
-
-    local function stat(glyph, value, label)
-        return Theme.card(CenterContainer:new{
-            dimen = Geom:new{ w = inner, h = card_h },
-            VerticalGroup:new{
-                align = "center",
-                text(glyph .. " " .. value, Theme.face("bold", 19), { max_width = inner }),
-                text(label, Theme.face("script", 14), { color = Theme.soft_ink, max_width = inner }),
-            },
-        }, { radius = px(12) })
-    end
-    local function row(a, b)
-        return HorizontalGroup:new{ a, hspan(gap), b }
-    end
+    -- No frames: a greeting, soft numbers on the page, a quiet line of love. Centred.
     local streak_label = s.streak == 1 and _("day streak") or _("days streak")
+    local stats = Theme.statGrid({
+        { Theme.flower, tostring(s.books), _("books loved") },
+        { Theme.open_heart, Data.fmtDuration(s.seconds), _("of stories") },
+        { Theme.blossom, tostring(s.pages), _("pages turned") },
+        { Theme.heart, tostring(s.streak), streak_label },
+        { Theme.star, Data.fmtDuration(s.today_seconds), _("read today") },
+        { "✧", Data.fmtDuration(s.week_seconds), _("this week") },
+    }, math.min(self.inner_w, px(600)), 3, { value_size = 21, label_size = 15, cell_h = 64, row_gap = 22 })
     local garden = VerticalGroup:new{
         align = "center",
-        greeting,
-        vspan(10),
-        row(stat(Theme.flower, tostring(s.books), _("books loved")),
-            stat(Theme.open_heart, Data.fmtDuration(s.seconds), _("of stories"))),
-        VerticalSpan:new{ width = gap },
-        row(stat(Theme.blossom, tostring(s.pages), _("pages turned")),
-            stat(Theme.heart, tostring(s.streak), streak_label)),
-        VerticalSpan:new{ width = gap },
-        row(stat(Theme.star, Data.fmtDuration(s.today_seconds), _("read today")),
-            stat(Theme.flower, Data.fmtDuration(s.week_seconds), _("this week"))),
-        VerticalSpan:new{ width = gap },
-        longest,
-        VerticalSpan:new{ width = gap },
-        pill,
+        text(Data.greeting(self.hour), Theme.face("script", 24)),
+        vspan(22),
+        Theme.rule(_("my garden in numbers"), math.min(self.inner_w, px(600))),
+        vspan(18),
+        stats,
+        vspan(18),
+        text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
+            Theme.face("script", 15), { color = Theme.soft_ink }),
+        vspan(26),
+        Theme.withBow(text(Data.affirmation(s.today), Theme.face("script", 19)), 24, "left"),
     }
     return CenterContainer:new{
         dimen = Geom:new{ w = self.width, h = self.content_h },
@@ -601,7 +532,11 @@ function BlossomView:build_books()
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
-    return self:galleryGrid(s.recent, self.content_h)
+    -- A touch smaller than the full page, centred, so the gallery can breathe.
+    return CenterContainer:new{
+        dimen = Geom:new{ w = self.width, h = self.content_h },
+        self:galleryGrid(s.recent, floor(self.content_h * 0.86)),
+    }
 end
 
 --- Up to 3×2 framed covers fitting `avail_h`; narrower tiles when height is tight,
@@ -629,13 +564,28 @@ function BlossomView:galleryGrid(books, avail_h)
     return group
 end
 
---- A day with a book: a quiet little date in the corner, the cover beneath it.
-function BlossomView:coverDay(day, cell, border)
+--- A read day: the date in the corner, then how long you read and the book you read most.
+function BlossomView:readDay(day, cell, border)
     local inner = cell - 2 * border
+    local pad = px(5)
     local number = text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 11),
         { color = day.today and Theme.ink or Theme.soft_ink })
+    local body = VerticalGroup:new{
+        align = "center",
+        text(Data.fmtDuration(day.seconds), Theme.face("bold", 13), { max_width = inner - 2 * pad }),
+    }
+    if day.book and day.book.title then
+        table.insert(body, TextBoxWidget:new{
+            text = day.book.title,
+            face = Theme.face("script", 11),
+            width = inner - 2 * pad,
+            height = floor(2 * Theme.face("script", 11).size * 1.4),
+            height_overflow_show_ellipsis = true,
+            alignment = "center",
+            bgcolor = Theme.shades[day.level + 1],
+        })
+    end
     local num_h = number:getSize().h
-    local cover_h = inner - num_h - px(4)
     return FrameContainer:new{
         width = cell,
         height = cell,
@@ -647,11 +597,8 @@ function BlossomView:coverDay(day, cell, border)
         background = Theme.shades[day.level + 1],
         VerticalGroup:new{
             align = "left",
-            HorizontalGroup:new{ hspan(px(5)), number },
-            CenterContainer:new{
-                dimen = Geom:new{ w = inner, h = cover_h },
-                self:art(day.book, inner - px(10), cover_h, false),
-            },
+            HorizontalGroup:new{ hspan(pad), number },
+            CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner - num_h - px(4) }, body },
         },
     }
 end
@@ -695,8 +642,8 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
             local day = cal.cells[(r - 1) * 7 + c]
             if not day then
                 cells[c] = RectSpan:new{ width = cell, height = cell }
-            elseif day.book and day.book.md5 and self:coverBB(day.book.md5) then
-                cells[c] = self:dayTappable(self:coverDay(day, cell, day.today and Size.border.thick or Size.border.thin), day)
+            elseif day.seconds > 0 then
+                cells[c] = self:dayTappable(self:readDay(day, cell, day.today and Size.border.thick or Size.border.thin), day)
             else
                 local border = day.today and Size.border.thick or Size.border.thin
                 local inner = cell - 2 * border
@@ -705,9 +652,6 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
                     text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 14),
                         { color = day.future and Theme.accent or Theme.ink }),
                 }
-                if day.level > 0 and inner > px(34) then
-                    table.insert(label, text(Theme.flower, Theme.face("ui", 11)))
-                end
                 cells[c] = self:dayTappable(FrameContainer:new{
                     width = cell,
                     height = cell,
@@ -752,40 +696,59 @@ function BlossomView:build_month()
         return Button:new{
             text = glyph,
             bordersize = 0,
-            width = px(60),
-            text_font_size = 28,
+            width = px(40),
+            text_font_size = 26,
             enabled = enabled,
             callback = function() self:shiftMonth(delta) end,
             show_parent = self,
         }
     end
-    local title_w = self.inner_w - 2 * px(60)
+    -- "▦ Calendar  ‹ September 2026 ›  ❀ Covers": the view you're on is outlined and bold.
+    local function mode(label, key)
+        local active = self.month_mode == key
+        return Button:new{
+            text = label,
+            bordersize = active and Size.border.thin or 0,
+            radius = px(14),
+            padding_h = px(10),
+            text_font_face = "cfont",
+            text_font_size = 15,
+            text_font_bold = active,
+            callback = function()
+                if self.month_mode ~= key then
+                    self.month_mode = key
+                    self:refresh()
+                end
+            end,
+            show_parent = self,
+        }
+    end
+    local left, right = mode(_("▦ Calendar"), "calendar"), mode(_("❀ Covers"), "covers")
+    local side_w = math.max(left:getSize().w, right:getSize().w)
+    local title_w = self.inner_w - 2 * side_w - 2 * px(40)
     local switcher = HorizontalGroup:new{
         align = "center",
+        CenterContainer:new{ dimen = Geom:new{ w = side_w, h = px(44) }, left },
         nav("‹", true, -1),
         CenterContainer:new{
-            dimen = Geom:new{ w = title_w, h = px(40) },
-            text(Data.monthTitle(self.year, self.month), Theme.face("script_bold", 22), { max_width = title_w }),
+            dimen = Geom:new{ w = title_w, h = px(44) },
+            text(Data.monthTitle(self.year, self.month), Theme.face("script_bold", 20), { max_width = title_w }),
         },
         nav("›", not is_current, 1),
+        CenterContainer:new{ dimen = Geom:new{ w = side_w, h = px(44) }, right },
     }
     local summary = string.format(_("%s · %d pages · %d days · %d books"),
         Data.fmtDuration(month.seconds), month.pages, month.days_read, month.books)
-    -- Summary and the covers/calendar switch share one line, leaving room for the covers.
-    local toggle = self:smallButton(calendar_mode and _("❀ covers") or _("▦ calendar"), function()
-        self.month_mode = calendar_mode and "covers" or "calendar"
-        self:refresh()
-    end)
-    local pill_w = self.inner_w - toggle:getSize().w - px(10)
     local pill = Theme.card(CenterContainer:new{
-        dimen = Geom:new{ w = cardInner(pill_w), h = px(30) },
-        text(summary, Theme.face("script", 15), { max_width = cardInner(pill_w) }),
+        dimen = Geom:new{ w = cardInner(self.inner_w), h = px(30) },
+        text(summary, Theme.face("script", 15), { max_width = cardInner(self.inner_w) }),
     }, { radius = px(18) })
 
     local group = VerticalGroup:new{
         align = "center",
         switcher,
-        HorizontalGroup:new{ align = "center", pill, hspan(px(10)), toggle },
+        vspan(4),
+        pill,
         VerticalSpan:new{ width = gap },
     }
     if calendar_mode then
@@ -811,24 +774,7 @@ end
 
 --- The wavy goal line with a heart riding it where you are.
 function BlossomView:goalWave(ratio, width)
-    ratio = math.max(0, math.min(1, ratio))
-    local heart_w = px(30)
-    local heart = Theme.heartIcon(30)
-    local heart_h = floor(heart_w * 44 / 48)
-    local amplitude = px(6)
-    local mid = px(2) + amplitude + floor(heart_h / 2)
-    local height = mid + amplitude + floor(heart_h / 2) + px(2)
-    local wave = GoalWave:new{ width = width, height = height, ratio = ratio, mid = mid,
-                               amplitude = amplitude, period = px(48) }
-    local fill_x = floor(width * ratio)
-    local heart_x = math.max(0, math.min(width - heart_w, fill_x - floor(heart_w / 2)))
-    local heart_y = floor(wave:waveY(heart_x + floor(heart_w / 2)) - heart_h / 2)
-    heart.overlap_offset = { heart_x, heart_y }
-    return OverlapGroup:new{
-        dimen = Geom:new{ w = width, h = height },
-        wave,
-        heart,
-    }
+    return Theme.wave(ratio, width)
 end
 
 function BlossomView:build_year()

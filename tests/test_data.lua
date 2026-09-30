@@ -276,4 +276,26 @@ test("annotationsForDay: new and old sidecar formats, only that day, sorted", fu
     eq(Data.annotationsForDay(nil, "2026-09-30"), { highlights = {}, bookmarks = {} })
 end)
 
+test("annotations without a date returns all, with a readable date", function()
+    local r = Data.annotations({ { title = "Dune", annotations = {
+        { datetime = "2026-08-03 21:10:00", drawer = "lighten", text = "a" },
+        { datetime = "2026-09-30 08:00:00", drawer = "lighten", text = "b" },
+        { datetime = "2026-09-01 08:00:00", text = "bm" },
+    } } })
+    eq({ #r.highlights, #r.bookmarks, r.highlights[1].text, r.highlights[1].date }, { 2, 1, "a", "3 Aug 2026" })
+end)
+
+test("snippet strips html, decodes entities, trims at a word", function()
+    eq(Data.snippet(nil), nil)
+    eq(Data.snippet("   "), nil)
+    eq(Data.snippet("<p>A <b>cozy</b> story&nbsp;about&hellip;</p><p>love &amp; books.</p>"), "A cozy story about… love & books.")
+    eq(Data.snippet("one &mdash; two &ndash; three"), "one — two – three")
+    local long = string.rep("word ", 100)
+    local s = Data.snippet(long, 30)
+    eq(s, "word word word word word word…")
+    -- never splits a multibyte character
+    local utf = Data.snippet(string.rep("é", 40), 21)
+    assert(utf:match("^[é]+…$"), utf)
+end)
+
 H.done()

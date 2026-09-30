@@ -18,6 +18,7 @@ local Size = require("ui/size")
 local TextWidget = require("ui/widget/textwidget")
 local VerticalGroup = require("ui/widget/verticalgroup")
 local VerticalSpan = require("ui/widget/verticalspan")
+local Widget = require("ui/widget/widget")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 
 local Theme = {
@@ -110,6 +111,128 @@ function Theme.RoundedFrame:paintTo(bb, x, y)
         end
     end
     bb:paintBorder(x, y, w, h, b, self.color, r)
+end
+
+--- The yearly goal as a wavy line: bold and solid up to where you are, soft and dotted after.
+Theme.GoalWave = Widget:extend{
+    width = 0,
+    height = 0,
+    ratio = 0,
+    mid = 0,        -- y of the wave's centre line
+    amplitude = 6,
+    period = 48,
+}
+
+--- Wave height at x (relative to the widget's top).
+function Theme.GoalWave:waveY(x)
+    return self.mid + self.amplitude * math.sin(2 * math.pi * x / self.period)
+end
+
+function Theme.GoalWave:getSize()
+    return Geom:new{ w = self.width, h = self.height }
+end
+
+function Theme.GoalWave:paintTo(bb, x, y)
+    self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
+    local done_w = math.floor(self.width * self.ratio + 0.5)
+    local thick, thin = Theme.px(4), Theme.px(2)
+    local dot = Theme.px(5)
+    for dx = 0, self.width - 1 do
+        local wy = math.floor(self:waveY(dx) + 0.5)
+        if dx <= done_w and self.ratio > 0 then
+            bb:paintRect(x + dx, y + wy - math.floor(thick / 2), 1, thick, Theme.accent)
+        elseif math.floor(dx / dot) % 2 == 0 then
+            bb:paintRect(x + dx, y + wy - math.floor(thin / 2), 1, thin, Theme.shades[3])
+        end
+    end
+end
+
+--- The wavy goal line with a heart riding it where you are.
+function Theme.wave(ratio, width)
+    ratio = math.max(0, math.min(1, ratio))
+    local heart_w = Theme.px(30)
+    local heart = Theme.heartIcon(30)
+    local heart_h = math.floor(heart_w * 44 / 48)
+    local amplitude = Theme.px(6)
+    local mid = Theme.px(2) + amplitude + math.floor(heart_h / 2)
+    local height = mid + amplitude + math.floor(heart_h / 2) + Theme.px(2)
+    local wave = Theme.GoalWave:new{ width = width, height = height, ratio = ratio, mid = mid,
+                               amplitude = amplitude, period = Theme.px(48) }
+    local fill_x = math.floor(width * ratio)
+    local heart_x = math.max(0, math.min(width - heart_w, fill_x - math.floor(heart_w / 2)))
+    local heart_y = math.floor(wave:waveY(heart_x + math.floor(heart_w / 2)) - heart_h / 2)
+    heart.overlap_offset = { heart_x, heart_y }
+    return OverlapGroup:new{
+        dimen = Geom:new{ w = width, h = height },
+        wave,
+        heart,
+    }
+end
+
+--- A quote with a soft bar on its left: “text”, a small gray `meta` line, then the reader's note.
+--- Short quotes take their natural height; long ones stop at `max_lines` with an ellipsis.
+function Theme.quote(quote_text, meta, note, width, max_lines)
+    local TextBoxWidget = require("ui/widget/textboxwidget")
+    local bar_w, pad = Theme.px(3), Theme.px(12)
+    local inner = width - bar_w - pad
+    local face = Theme.face("script", 17)
+    local function box(height)
+        return TextBoxWidget:new{
+            text = "“" .. (quote_text or "") .. "”",
+            face = face,
+            width = inner,
+            height = height,
+            height_overflow_show_ellipsis = true,
+            bgcolor = Theme.bg,
+        }
+    end
+    local quote = box()
+    local max_h = math.floor((max_lines or 4) * face.size * 1.45)
+    if quote:getSize().h > max_h then
+        quote:free()
+        quote = box(max_h)
+    end
+    local body = VerticalGroup:new{
+        align = "left",
+        quote,
+        Theme.vspan(2),
+        Theme.text(meta, Theme.face("script", 13), { color = Theme.soft_ink, max_width = inner }),
+    }
+    if note then
+        table.insert(body, Theme.vspan(2))
+        table.insert(body, Theme.text("✎ " .. note, Theme.face("script", 15), { max_width = inner }))
+    end
+    local bar = LineWidget:new{
+        background = Theme.shades[3],
+        dimen = Geom:new{ w = bar_w, h = body:getSize().h },
+    }
+    body:resetLayout()
+    return HorizontalGroup:new{ align = "top", bar, HorizontalSpan:new{ width = pad }, body }
+end
+
+--- Frameless little stats: glyph + value over a soft label, in `cols` columns.
+function Theme.statGrid(items, width, cols, opts)
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    opts = opts or {}
+    local col_w = math.floor(width / cols)
+    local grid = VerticalGroup:new{ align = "center" }
+    local row
+    for i, item in ipairs(items) do
+        if (i - 1) % cols == 0 then
+            if row then table.insert(grid, Theme.vspan(opts.row_gap or 12)) end
+            row = HorizontalGroup:new{ align = "top" }
+            table.insert(grid, row)
+        end
+        table.insert(row, CenterContainer:new{
+            dimen = Geom:new{ w = col_w, h = Theme.px(opts.cell_h or 46) },
+            VerticalGroup:new{
+                align = "center",
+                Theme.text(item[1] .. " " .. item[2], Theme.face("bold", opts.value_size or 16), { max_width = col_w }),
+                Theme.text(item[3], Theme.face("script", opts.label_size or 13), { color = Theme.soft_ink, max_width = col_w }),
+            },
+        })
+    end
+    return grid
 end
 
 --- Width left for content inside a default Theme.card.

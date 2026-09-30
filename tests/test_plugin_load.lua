@@ -211,9 +211,9 @@ local function resetDB()
     db.year_months = cols({ { os.date("%m"), 5400, 120 } })
     -- date, id, md5, seconds: today Anathema (a.epub) beats Atomic Habits; yesterday only an uncovered book.
     db.day_books = cols({
-        { today, 2, "zzz", 300 },
-        { today, 1, "md5:/books/a.epub", 900 },
-        { Data.addDays(today, -1) >= os.date("%Y-%m-01") and Data.addDays(today, -1) or today, 7, "nope", 100 },
+        { today, 2, "zzz", "Atomic Habits", 300 },
+        { today, 1, "md5:/books/a.epub", "Anathema", 900 },
+        { Data.addDays(today, -1) >= os.date("%Y-%m-01") and Data.addDays(today, -1) or today, 7, "nope", "Lost", 100 },
     })
     G_reader_settings.data = {}
     db.period = function()
@@ -544,13 +544,19 @@ test("tapping a book opens its detail page", function()
     eq(getmetatable(detail) == require("blossom_detail"), true)
     local t = texts(detail)
     assert(t:find("Book details"), t)
-    assert(t:find("25%% read"), t)
-    assert(t:find("50 of 200 pages"), t)
-    assert(t:find("time together"), t)
-    assert(t:find("100 pages per hour") or t:find("100\n"), t)
-    assert(t:find("4 · 1 note"), t)
+    -- order: title, author, (snippet), wave, "25% read · 50 of 200 pages"
+    assert(t:find("Atomic Habits\nJames Clear\n25%% read · 50 of 200 pages"), t)
+    local wave
+    walk(detail, function(n) if getmetatable(n) == BlossomView.GoalWave then wave = n end end)
+    eq(wave.ratio, 0.25)
+    assert(t:find("♡ 30m\ntime together"), t)
+    assert(t:find("✧ 100\npages per hour"), t)
+    assert(t:find("☾ 1h 30m\nleft to read"), t) -- 150 pages * 36 s
+    assert(t:find("♥ 0\nhighlights\n☆ 0\nbookmarks"), t)
     assert(t:find("first read 3 Aug 2026 · last read 29 Sep 2026"), t)
-    assert(t:find("1h 30m"), t) -- time left: 150 pages * 36 s
+    assert(t:find("No highlights yet"), t)
+    -- no framed cards any more
+    walk(detail, function(n) assert(not (n.kind == "Framecontainer" and n.background == 0xEE), "no card frames") end)
     detail:onSwipe(nil, { direction = "south" })
     eq(closed[#closed] == detail, true)
     detail:onCloseWidget()
@@ -572,9 +578,13 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     resetDB()
     local view = openView()
     view:goToPage(4)
-    local toggle
-    walk(view, function(n) if n.text == "▦ calendar" then toggle = n end end)
-    toggle.callback()
+    -- header: ▦ Calendar ‹ Month › ❀ Covers, the active mode outlined + bold
+    local t0 = texts(view)
+    assert(t0:find("▦ Calendar\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n❀ Covers"), t0)
+    local cal_btn, cov_btn
+    walk(view, function(n) if n.text == "▦ Calendar" then cal_btn = n elseif n.text == "❀ Covers" then cov_btn = n end end)
+    eq({ cov_btn.text_font_bold, cal_btn.text_font_bold, cal_btn.bordersize }, { true, false, 0 })
+    cal_btn.callback()
     eq(view.month_mode, "calendar")
     local t = texts(view)
     assert(t:find("Su\nMo\nTu"), t)
@@ -589,8 +599,8 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     -- previous month keeps calendar mode
     view:shiftMonth(-1)
     assert(texts(view):find("less"))
-    walk(view, function(n) if n.text == "❀ covers" then toggle = n end end)
-    toggle.callback()
+    walk(view, function(n) if n.text == "❀ Covers" then cov_btn = n end end)
+    cov_btn.callback()
     eq(view.month_mode, "covers")
 end)
 
@@ -702,17 +712,18 @@ test("loadBook handles bad ids and missing rows", function()
     eq(p:loadBook(2).title, "Atomic Habits")
 end)
 
-test("calendar shows the most-read book's cover on its day", function()
+test("calendar days show time read and the most-read book's name, no covers", function()
     resetDB()
     local view = openView()
     view.month_mode = "calendar"
     view:goToPage(4)
     local month = view.periods[os.date("%Y-%m")]
-    eq(month.top_by_date[today].md5, "md5:/books/a.epub")
-    eq(count(view, "ImageWidget"), 1) -- only days whose top book has a cover
-    local day_tile = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
-    assert(day_tile, "today's cover cell is tappable")
-    -- other days still show number + flower
+    eq(month.top_by_date[today].title, "Anathema")
+    eq(count(view, "ImageWidget"), 0)
+    local d = tostring(tonumber(os.date("%d")))
+    local day_tile = findTappable(view, function(t) return t:match("^" .. d .. "\n") end)
+    assert(day_tile, "today's cell is tappable")
+    eq(texts(day_tile), d .. "\n10m\nAnathema")
     assert(texts(view):find("less"))
 end)
 
@@ -728,7 +739,7 @@ end)
 local function openToday(view)
     view.month_mode = "calendar"
     view:goToPage(4)
-    local cell = findTappable(view, function(t) return t:match("^" .. tonumber(os.date("%d")) .. "%f[%D]") end)
+    local cell = findTappable(view, function(t) return t:match("^" .. tonumber(os.date("%d")) .. "\n") end)
     assert(cell, "today's cell is tappable")
     cell:onTap()
     local page = shown[#shown]
@@ -822,7 +833,7 @@ end)
 test("bows: in every header, on finished books and the year title", function()
     resetDB()
     local view = openView()
-    eq(bows(view), 1) -- header ribbon
+    eq(bows(view), 2) -- header ribbon + the garden's affirmation
     view:goToPage(3)
     eq(bows(view), 2) -- header + finished Anathema
     view:goToPage(5)
@@ -926,15 +937,60 @@ test("year cards use gentler corners", function()
     eq(radii, { 10, 10 })
 end)
 
-test("garden is a smaller grid centred vertically", function()
+test("garden is frameless and centred vertically", function()
     resetDB()
     local view = openView()
     local content = view[1][1][1][3] -- frame > overlap > column > content (after header, span)
     eq(content.kind, "Centercontainer")
     eq(content.dimen.h, view.content_h)
-    local cards = {}
-    walk(content, function(n) if n.kind == "Framecontainer" and n.radius == 12 then cards[#cards + 1] = n end end)
-    eq(#cards, 6)
+    local frames = 0
+    walk(content, function(n) if n.kind == "Framecontainer" then frames = frames + 1 end end)
+    eq(frames, 0)
+    local t = texts(content)
+    assert(t:find("my garden in numbers"), t)
+    assert(t:find("❀ 3\nbooks loved\n♡ 2h 30m\nof stories\n❀ 420\npages turned\n♥ 2\ndays streak"), t)
+    assert(t:find("longest streak: 2 days ☆"), t)
+end)
+
+test("book details show snippet, highlights and bookmark count from the sidecar", function()
+    resetDB()
+    db.book = function()
+        return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 300, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
+    end
+    db.sidecar = { ["/books/a.epub"] = {
+        doc_props = { description = "<p>A <i>witchy</i> romance in the woods.</p>" },
+        annotations = {
+            { datetime = "2026-08-03 21:00:00", drawer = "lighten", text = "She was the storm.", note = "chills", pageno = 88, chapter = "Nine" },
+            { datetime = "2026-08-04 21:00:00", drawer = "lighten", text = "Second quote.", pageno = 90 },
+            { datetime = "2026-08-04 22:00:00", text = "in Ten", pageno = 99 },
+        },
+    } }
+    local view = openView()
+    view:openBook(1)
+    local t = texts(shown[#shown])
+    assert(t:find("Anathema\nKeri Lake\nA witchy romance in the woods.\nfinished · 300 of 300 pages"), t)
+    assert(t:find("♥ 2\nhighlights\n☆ 1\nbookmark"), t)
+    assert(t:find("“She was the storm.”", 1, true), t)
+    assert(t:find("p. 88 · Nine · 3 Aug 2026", 1, true), t)
+    assert(t:find("✎ chills", 1, true), t)
+    assert(t:find("“Second quote.”", 1, true), t)
+    eq(bows(shown[#shown]), 2) -- header + finished
+end)
+
+test("book details: many highlights are capped with +N more", function()
+    resetDB()
+    db.book = function()
+        return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
+    end
+    local many = {}
+    for i = 1, 25 do many[i] = { datetime = string.format("2026-08-%02d 10:00:00", i), drawer = "lighten", text = "quote " .. i } end
+    db.sidecar = { ["/books/a.epub"] = { annotations = many } }
+    local view = openView()
+    view:openBook(1)
+    local t = texts(shown[#shown])
+    assert(t:find("quote 1"), t)
+    assert(t:find("more highlights"), t)
+    assert(not t:find("quote 25"), t)
 end)
 
 H.done()

@@ -242,7 +242,7 @@ function Data.topBookPerDay(rows)
         local seconds = tonumber(row.seconds) or 0
         local best = top[row.date]
         if row.date and seconds > 0 and (not best or seconds > best.seconds) then
-            top[row.date] = { id = tonumber(row.id), md5 = row.md5, seconds = seconds }
+            top[row.date] = { id = tonumber(row.id), md5 = row.md5, title = row.title, seconds = seconds }
         end
     end
     return top
@@ -354,13 +354,13 @@ function Data.daySubtitle(date)
     return os.date("%A · %B %Y", noon(date))
 end
 
---- Highlights and bookmarks created on `date`.
+--- Highlights and bookmarks created on `date` (every date when `date` is nil).
 --- books = {{ title, id, annotations = {...} (KOReader >= 2024), bookmarks = {...} (older sidecars) }}
-function Data.annotationsForDay(books, date)
+function Data.annotations(books, date)
     local result = { highlights = {}, bookmarks = {} }
     local function add(book, a, is_highlight, quote, note)
         local when = a.datetime
-        if type(when) ~= "string" or when:sub(1, 10) ~= date then return end
+        if type(when) ~= "string" or (date and when:sub(1, 10) ~= date) then return end
         local item = {
             title = book.title or "Untitled",
             book_id = book.id,
@@ -386,10 +386,41 @@ function Data.annotationsForDay(books, date)
             end
         end
     end
+    for _, list in ipairs({ result.highlights, result.bookmarks }) do
+        for _, item in ipairs(list) do
+            item.date = Data.fmtDate(os.time{ year = tonumber(item.datetime:sub(1, 4)), month = tonumber(item.datetime:sub(6, 7)),
+                day = tonumber(item.datetime:sub(9, 10)), hour = 12 })
+        end
+    end
     local function byTime(x, y) return x.datetime < y.datetime end
     table.sort(result.highlights, byTime)
     table.sort(result.bookmarks, byTime)
     return result
+end
+
+Data.annotationsForDay = Data.annotations
+
+--- A short plain-text snippet from a book description (often HTML).
+function Data.snippet(description, max_chars)
+    if type(description) ~= "string" then return end
+    local s = description
+        :gsub("<[Bb][Rr]%s*/?>", " ")
+        :gsub("</[Pp]>", " ")
+        :gsub("<[^>]*>", "")
+        :gsub("&nbsp;", " "):gsub("&amp;", "&"):gsub("&quot;", '"'):gsub("&#39;", "'"):gsub("&apos;", "'")
+        :gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&[rl]squo;", "'"):gsub("&[rl]dquo;", '"'):gsub("&hellip;", "…"):gsub("&mdash;", "—"):gsub("&ndash;", "–")
+        :gsub("%s+", " ")
+    s = s:gsub("^ ", ""):gsub(" $", "")
+    if s == "" then return end
+    max_chars = max_chars or 220
+    if #s > max_chars then
+        -- cut at a word boundary, and never inside a UTF-8 character
+        local cut = s:sub(1, max_chars):match("^(.*) ") or s:sub(1, max_chars)
+        while #cut > 0 and cut:byte(-1) >= 0x80 and cut:byte(-1) < 0xC0 do cut = cut:sub(1, -2) end
+        if #cut > 0 and cut:byte(-1) >= 0xC0 then cut = cut:sub(1, -2) end
+        s = cut:gsub("[%s,;:%.]+$", "") .. "…"
+    end
+    return s
 end
 
 -- Book detail ------------------------------------------------------------------

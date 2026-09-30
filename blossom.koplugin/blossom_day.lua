@@ -77,47 +77,11 @@ function BlossomDay:coverRow(books)
     return row
 end
 
---- A quote with a soft bar on its left: “text”, then book · page · time, then the note.
 function BlossomDay:quote(h, max_lines)
-    local bar_w, pad = px(3), px(12)
-    local width = self.inner_w - bar_w - pad
-    local face = Theme.face("script", 17)
-    local function box(height)
-        return TextBoxWidget:new{
-            text = "“" .. (h.text or "") .. "”",
-            face = face,
-            width = width,
-            height = height,
-            height_overflow_show_ellipsis = true,
-            bgcolor = Theme.bg,
-        }
-    end
-    -- Natural height for short quotes; long ones stop at max_lines with an ellipsis.
-    local quote = box()
-    local max_h = floor(max_lines * face.size * 1.45)
-    if quote:getSize().h > max_h then
-        quote:free()
-        quote = box(max_h)
-    end
     local where = { h.title }
     if h.page then where[#where + 1] = string.format(_("p. %d"), h.page) end
     where[#where + 1] = h.time
-    local body = VerticalGroup:new{
-        align = "left",
-        quote,
-        vspan(2),
-        muted(table.concat(where, " · "), 13, width),
-    }
-    if h.note then
-        table.insert(body, vspan(2))
-        table.insert(body, text("✎ " .. h.note, Theme.face("script", 15), { max_width = width }))
-    end
-    local bar = LineWidget:new{
-        background = Theme.shades[3],
-        dimen = Geom:new{ w = bar_w, h = body:getSize().h },
-    }
-    body:resetLayout()
-    return HorizontalGroup:new{ align = "top", bar, HorizontalSpan:new{ width = pad }, body }
+    return Theme.quote(h.text, table.concat(where, " · "), h.note, self.inner_w, max_lines)
 end
 
 function BlossomDay:build()

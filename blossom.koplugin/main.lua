@@ -64,7 +64,7 @@ local SQL_YEAR_MONTHS = [[
 
 -- Time per book per day; the view keeps each day's longest.
 local SQL_DAY_BOOKS = [[
-    SELECT date(p.start_time, 'unixepoch', 'localtime') AS d, b.id, b.md5, sum(p.duration)
+    SELECT date(p.start_time, 'unixepoch', 'localtime') AS d, b.id, b.md5, b.title, sum(p.duration)
     FROM page_stat_data p JOIN book b ON b.id = p.id_book
     WHERE p.start_time >= %d AND p.start_time < %d
     GROUP BY d, b.id;]]
@@ -193,7 +193,7 @@ function Blossom:loadMonth(y, m)
     local month = self:loadPeriod(start_time, end_time)
     local day_rows = self:withDB(function(conn)
         return rows(conn:exec(string.format(SQL_DAY_BOOKS, start_time, end_time)),
-            { "date", "id", "md5", "seconds" })
+            { "date", "id", "md5", "title", "seconds" })
     end)
     month.top_by_date = Data.topBookPerDay(day_rows)
     return month
@@ -206,7 +206,38 @@ function Blossom:loadBook(id)
         return rows(conn:exec(string.format(SQL_BOOK, id)), { "id", "title", "authors", "md5", "pages",
             "read_pages", "seconds", "highlights", "notes", "first", "last", "days" })[1]
     end)
-    return row and Data.bookDetail(row)
+    if not row then return end
+    local detail = Data.bookDetail(row)
+    local sidecar = self:readSidecar(row.md5)
+    local notes = Data.annotations({ { title = detail.title, id = detail.id,
+        annotations = sidecar.annotations, bookmarks = sidecar.bookmarks } })
+    detail.highlight_list = notes.highlights
+    detail.bookmark_count = #notes.bookmarks
+    detail.snippet = Data.snippet(sidecar.description)
+    return detail
+end
+
+--- A book's annotations and description from its sidecar (and CoverBrowser's cache).
+function Blossom:readSidecar(md5)
+    local out = {}
+    local file = self.covers and self.covers:pathFor(md5)
+    if not file then return out end
+    local ok, err = pcall(function()
+        local doc_settings = require("docsettings"):open(file)
+        out.annotations = doc_settings:readSetting("annotations")
+        if not out.annotations then out.bookmarks = doc_settings:readSetting("bookmarks") end
+        local props = doc_settings:readSetting("doc_props")
+        out.description = props and props.description
+    end)
+    if not ok then logger.warn("Blossom: could not read sidecar", file, err) end
+    if not out.description then
+        local bim = package.loaded["bookinfomanager"]
+        if bim then
+            local ok2, info = pcall(bim.getBookInfo, bim, file, false)
+            if ok2 and info then out.description = info.description end
+        end
+    end
+    return out
 end
 
 function Blossom:loadYear(y)
@@ -229,17 +260,8 @@ function Blossom:loadDay(date)
     day.date = date
     local books = {}
     for i, b in ipairs(day.list) do
-        local entry = { title = b.title, id = b.id }
-        local file = self.covers and self.covers:pathFor(b.md5)
-        if file then
-            local ok, err = pcall(function()
-                local doc_settings = require("docsettings"):open(file)
-                entry.annotations = doc_settings:readSetting("annotations")
-                if not entry.annotations then entry.bookmarks = doc_settings:readSetting("bookmarks") end
-            end)
-            if not ok then logger.warn("Blossom: could not read annotations", file, err) end
-        end
-        books[i] = entry
+        local sidecar = self:readSidecar(b.md5)
+        books[i] = { title = b.title, id = b.id, annotations = sidecar.annotations, bookmarks = sidecar.bookmarks }
     end
     day.notes = Data.annotationsForDay(books, date)
     return day

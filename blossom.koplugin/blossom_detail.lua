@@ -4,7 +4,6 @@ stat cards for one book. Shown on top of the dashboard; covers come from
 the dashboard's cache through the `art` callback.
 --]]
 
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
@@ -12,7 +11,6 @@ local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
 local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local ProgressWidget = require("ui/widget/progresswidget")
 local Size = require("ui/size")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
@@ -26,7 +24,7 @@ local Theme = require("blossom_theme")
 
 local px = Theme.px
 local floor = math.floor
-local text, vspan, cardInner = Theme.text, Theme.vspan, Theme.cardInner
+local text, vspan = Theme.text, Theme.vspan
 
 local BlossomDetail = InputContainer:extend{
     book = nil, -- Data.bookDetail result
@@ -50,68 +48,78 @@ function BlossomDetail:init()
     self:build()
 end
 
---- The six cards: label glyph, value, caption.
+--- The little frameless stats: glyph, value, label.
 function BlossomDetail:statValues()
     local b = self.book
-    local highlights = b.notes > 0
-        and string.format(b.notes == 1 and _("%d · %d note") or _("%d · %d notes"), b.highlights, b.notes)
-        or tostring(b.highlights)
     return {
         { Theme.open_heart, Data.fmtDuration(b.seconds), _("time together") },
-        { Theme.blossom, tostring(b.read_pages), _("pages read") },
         { Theme.flower, tostring(b.days), b.days == 1 and _("reading day") or _("reading days") },
-        { Theme.star, b.speed and tostring(b.speed) or "—", _("pages per hour") },
-        { Theme.heart, highlights, _("highlights") },
-        { "☾", b.finished and Theme.heart or (b.time_left and Data.fmtDuration(b.time_left) or "—"),
+        { "✧", b.speed and tostring(b.speed) or "—", _("pages per hour") },
+        { "☾", b.finished and "—" or (b.time_left and Data.fmtDuration(b.time_left) or "—"),
           b.finished and _("all read!") or _("left to read") },
+        { Theme.heart, tostring(#(b.highlight_list or {})), #(b.highlight_list or {}) == 1 and _("highlight") or _("highlights") },
+        { Theme.star, tostring(b.bookmark_count or 0), b.bookmark_count == 1 and _("bookmark") or _("bookmarks") },
     }
 end
 
 function BlossomDetail:build()
     local b = self.book
-    local gap = px(10)
+    local gap = px(14)
     local header = Theme.header(_("Book details"), self.width, function() self:onClose() end, self)
 
-    -- Cover beside title, author and progress.
-    -- Shape the frame like the cover itself, so filling it crops nothing.
+    -- Cover beside: title, author, snippet, wavy progress, "66% read · 250 of 380 pages".
     local ratio = (self.aspect and self.aspect(b)) or 1.45
     local cover_w = floor(self.inner_w * 0.36)
-    local max_h = floor(self.height * 0.32)
+    local max_h = floor(self.height * 0.3)
     if floor(cover_w * ratio) > max_h then cover_w = floor(max_h / ratio) end
     local cover_h = floor((cover_w - 2 * Size.border.thin) * ratio)
     local info_w = self.inner_w - cover_w - gap
     local pct = floor(b.progress * 100 + 0.5)
+
     local info = VerticalGroup:new{
         align = "left",
         TextBoxWidget:new{
             text = b.title,
-            face = Theme.face("script_bold", 22),
+            face = Theme.face("script_bold", 21),
             width = info_w,
             bgcolor = Theme.bg,
         },
-        text(b.authors ~= "" and b.authors or " ", Theme.face("script", 17),
+        text(b.authors ~= "" and b.authors or " ", Theme.face("script", 16),
             { color = Theme.soft_ink, max_width = info_w }),
-        vspan(10),
-        ProgressWidget:new{
-            width = info_w,
-            height = px(14),
-            percentage = b.progress,
-            radius = px(7),
-            margin_h = 0,
-            margin_v = 0,
-            bordersize = Size.border.thin,
-            bordercolor = Theme.accent,
-            bgcolor = Theme.bg,
-            fillcolor = Theme.accent,
-        },
-        vspan(4),
-        b.finished and Theme.withBow(text(_("finished"), Theme.face("script", 17)), 22)
-            or text(string.format(_("%d%% read"), pct), Theme.face("script", 17), { max_width = info_w }),
-        text(b.total_pages > 0 and string.format(_("%d of %d pages"), math.min(b.read_pages, b.total_pages), b.total_pages) or " ",
-            Theme.face("ui", 14), { color = Theme.soft_ink, max_width = info_w }),
     }
-    -- The cover fills its rounded frame edge to edge.
-    local polaroid = Theme.RoundedFrame:new{
+    if b.snippet then
+        table.insert(info, vspan(6))
+        -- Natural height, at most 5 lines.
+        local function snippet(height)
+            return TextBoxWidget:new{
+                text = b.snippet,
+                face = Theme.face("script", 14),
+                fgcolor = Theme.soft_ink,
+                width = info_w,
+                height = height,
+                height_overflow_show_ellipsis = true,
+                bgcolor = Theme.bg,
+            }
+        end
+        local box = snippet()
+        local max_snippet_h = floor(5 * Theme.face("script", 14).size * 1.45)
+        if box:getSize().h > max_snippet_h then
+            box:free()
+            box = snippet(max_snippet_h)
+        end
+        table.insert(info, box)
+    end
+    table.insert(info, vspan(8))
+    table.insert(info, Theme.wave(b.progress, info_w))
+    local pages = b.total_pages > 0
+        and string.format(_("%d of %d pages"), math.min(b.read_pages, b.total_pages), b.total_pages) or nil
+    local progress_line = b.finished and _("finished") or string.format(_("%d%% read"), pct)
+    if pages then progress_line = progress_line .. " · " .. pages end
+    local progress = text(progress_line, Theme.face("script", 15), { max_width = info_w - px(30) })
+    table.insert(info, b.finished and Theme.withBow(progress, 20, "left") or progress)
+
+    -- The cover fills a frame shaped like itself.
+    local cover = Theme.RoundedFrame:new{
         radius = px(10),
         bordersize = Size.border.thin,
         color = Theme.accent,
@@ -119,38 +127,50 @@ function BlossomDetail:build()
         outside = Theme.bg,
         self.art(b, cover_w - 2 * Size.border.thin, cover_h, true),
     }
-    local top = HorizontalGroup:new{
-        align = "top",
-        polaroid,
-        HorizontalSpan:new{ width = gap },
-        info,
-    }
+    local top = HorizontalGroup:new{ align = "top", cover, HorizontalSpan:new{ width = gap }, info }
 
-    -- 3 rows × 2 cards.
-    local card_w = floor((self.inner_w - gap) / 2)
-    local inner = cardInner(card_w)
-    local dates = string.format(_("first read %s · last read %s"), b.first or "—", b.last or "—")
-    local footer = text(dates, Theme.face("script", 15), { color = Theme.soft_ink, max_width = self.inner_w })
-    local used = header:getSize().h + top:getSize().h + footer:getSize().h + gap * 6
-    local card_h = math.min(px(70), floor((self.height - used) / 3) - 2 * (Size.padding.default + Size.border.thin))
-    local grid = VerticalGroup:new{ align = "center" }
-    local values = self:statValues()
-    for r = 0, 2 do
-        local row = HorizontalGroup:new{}
-        for c = 1, 2 do
-            local v = values[r * 2 + c]
-            if c == 2 then table.insert(row, HorizontalSpan:new{ width = gap }) end
-            table.insert(row, Theme.card(CenterContainer:new{
-                dimen = Geom:new{ w = inner, h = card_h },
-                VerticalGroup:new{
-                    align = "center",
-                    text(v[1] .. " " .. v[2], Theme.face("bold", 20), { max_width = inner }),
-                    text(v[3], Theme.face("script", 15), { color = Theme.soft_ink, max_width = inner }),
-                },
-            }))
+    local content = VerticalGroup:new{
+        align = "center",
+        top,
+        VerticalSpan:new{ width = gap },
+        Theme.rule(_("my reading"), self.inner_w),
+        vspan(6),
+        Theme.statGrid(self:statValues(), self.inner_w, 3),
+        vspan(6),
+        text(string.format(_("first read %s · last read %s"), b.first or "—", b.last or "—"),
+            Theme.face("script", 13), { color = Theme.soft_ink, max_width = self.inner_w }),
+        VerticalSpan:new{ width = gap },
+        Theme.rule(_("my highlights"), self.inner_w),
+        vspan(10),
+    }
+    local function room()
+        local h = content:getSize().h
+        content:resetLayout()
+        return self.height - header:getSize().h - h - px(20)
+    end
+    local list = b.highlight_list or {}
+    if #list == 0 then
+        table.insert(content, text(_("No highlights yet — the best is still ahead ♡"), Theme.face("script", 15),
+            { color = Theme.soft_ink, max_width = self.inner_w }))
+    else
+        local shown = 0
+        for i, h in ipairs(list) do
+            local meta = {}
+            if h.page then meta[#meta + 1] = string.format(_("p. %d"), h.page) end
+            if h.chapter then meta[#meta + 1] = h.chapter end
+            meta[#meta + 1] = h.date
+            local q = Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 3)
+            local more_h = i < #list and px(22) or 0
+            if q:getSize().h + px(12) + more_h > room() then q:free(); break end
+            if i > 1 then table.insert(content, vspan(12)) end
+            table.insert(content, q)
+            shown = i
         end
-        if r > 0 then table.insert(grid, VerticalSpan:new{ width = gap }) end
-        table.insert(grid, row)
+        if shown < #list then
+            table.insert(content, vspan(6))
+            table.insert(content, text(string.format(_("+%d more highlights %s"), #list - shown, Theme.open_heart),
+                Theme.face("script", 14), { color = Theme.soft_ink }))
+        end
     end
 
     if self[1] then self[1]:free() end
@@ -163,14 +183,8 @@ function BlossomDetail:build()
         VerticalGroup:new{
             align = "center",
             header,
-            VerticalSpan:new{ width = gap },
-            top,
-            VerticalSpan:new{ width = gap * 2 },
-            grid,
-            VerticalSpan:new{ width = gap },
-            footer,
-            vspan(4),
-            text(_("happy reading ♡"), Theme.face("script", 15), { color = Theme.accent }),
+            vspan(10),
+            content,
         },
     }
 end
