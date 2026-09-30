@@ -607,7 +607,7 @@ test("year page: goal hearts, status, month chart", function()
     eq(gb.ratio, 1 / 12)
     assert(not t:find("♥  ♡"), "no heart row")
     assert(t:find("1h 30m\nread\n120\npages\n2\ndays"), t)
-    assert(t:find("change my goal"), t)
+    assert(t:find(" of 12 books\n✎"), t) -- pencil right after the goal
     local bars = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Bar then bars = bars + 1 end end)
     eq(bars, 12)
@@ -620,7 +620,7 @@ test("setting the goal saves it and refreshes", function()
     local view = openView()
     view:goToPage(5)
     local btn
-    walk(view, function(n) if n.text == "✎  change my goal" then btn = n end end)
+    walk(view, function(n) if n.text == "✎" then btn = n end end)
     btn.callback()
     local spin = lastOfKind("SpinWidget")
     eq({ spin.value, spin.value_min, spin.value_max }, { 12, 1, 365 })

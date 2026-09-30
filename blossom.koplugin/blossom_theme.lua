@@ -155,23 +155,6 @@ function Theme.statStrip(items, width)
     return Theme.card(row, { bordersize = 0, radius = Theme.px(18) })
 end
 
---- A soft pill button in the diary's italic script.
-function Theme.pillButton(label, callback, show_parent)
-    return Button:new{
-        text = label,
-        callback = callback,
-        show_parent = show_parent,
-        bordersize = Size.border.thin,
-        radius = Theme.px(20),
-        padding_h = Theme.px(18),
-        padding_v = Theme.px(6),
-        background = Theme.bg,
-        text_font_face = "NotoSerif-Italic.ttf",
-        text_font_size = 17,
-        text_font_bold = false,
-    }
-end
-
 --- A quiet section label: ─── label ───
 function Theme.rule(label, width)
     local t = Theme.text(label, Theme.face("script", 16), { color = Theme.soft_ink })

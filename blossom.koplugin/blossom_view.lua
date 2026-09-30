@@ -881,6 +881,21 @@ function BlossomView:build_year()
             align = "center",
             text(tostring(year.finished), Theme.face("script_bold", 40)),
             text(string.format(_(" of %d books"), goal), Theme.face("script", 22)),
+            -- ✎ as a little superscript: tap to change the goal.
+            VerticalGroup:new{
+                Button:new{
+                    text = "✎",
+                    bordersize = 0,
+                    padding = px(4),
+                    background = Theme.card_bg,
+                    text_font_face = "cfont",
+                    text_font_size = 17,
+                    text_font_bold = false,
+                    callback = function() self:editGoal(goal) end,
+                    show_parent = self,
+                },
+                vspan(18),
+            },
         },
         vspan(8),
         self:goalWave(year.finished / goal, wave_w),
@@ -888,9 +903,7 @@ function BlossomView:build_year()
         vspan(10),
         text(string.format(_("%d%% of my goal · %s"), pct, fresh and _("a fresh year to bloom ❀") or status.message),
             Theme.face("script", 17), { max_width = card_inner }),
-        vspan(14),
-        Theme.pillButton(_("✎  change my goal"), function() self:editGoal(goal) end, self),
-        vspan(8),
+        vspan(10),
     }
 
     local group = VerticalGroup:new{
