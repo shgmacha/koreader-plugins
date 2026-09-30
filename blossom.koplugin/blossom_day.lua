@@ -39,7 +39,7 @@ local BlossomDay = InputContainer:extend{
 function BlossomDay:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    self.inner_w = self.width - 2 * px(34)
+    self.inner_w = self.width - 2 * px(Theme.MARGIN)
     if Device:isTouchDevice() then
         self.ges_events = {
             Swipe = { GestureRange:new{ ges = "swipe", range = self.dimen } },
@@ -181,7 +181,7 @@ function BlossomDay:build()
         VerticalGroup:new{
             align = "center",
             header,
-            vspan(22),
+            vspan(Theme.TOP_GAP),
             content,
         },
     }

@@ -158,7 +158,7 @@ local BlossomView = InputContainer:extend{
 function BlossomView:init()
     self.width, self.height = Screen:getWidth(), Screen:getHeight()
     self.dimen = Geom:new{ x = 0, y = 0, w = self.width, h = self.height }
-    self.margin = px(16)
+    self.margin = px(Theme.MARGIN)
     self.inner_w = self.width - 2 * self.margin
     local now = os.date("*t")
     self.this_year, self.this_month = now.year, now.month
@@ -185,7 +185,7 @@ function BlossomView:build()
     if self[1] then self[1]:free() end
     local header = Theme.header(TITLES[PAGES[self.page]], self.width, function() self:onClose() end, self)
     local footer = self:buildFooter()
-    self.content_h = self.height - header:getSize().h - footer:getSize().h - px(16)
+    self.content_h = self.height - header:getSize().h - footer:getSize().h - px(Theme.TOP_GAP) - px(16)
     local content = self["build_" .. PAGES[self.page]](self)
     local full = Geom:new{ w = self.width, h = self.height }
     self[1] = FrameContainer:new{
@@ -199,7 +199,7 @@ function BlossomView:build()
             VerticalGroup:new{
                 align = "center",
                 header,
-                vspan(8),
+                vspan(Theme.TOP_GAP),
                 content,
             },
             BottomContainer:new{ dimen = full, footer },
@@ -461,7 +461,7 @@ function BlossomView:build_week()
 
     local group = VerticalGroup:new{
         align = "center",
-        vspan(20),
+        vspan(6),
         chart,
         vspan(10),
         headline,
@@ -775,7 +775,7 @@ function BlossomView:build_month()
 
     local shown = math.min(BOOK_COLS * BOOK_ROWS, month.books)
     local more_h = month.books > shown and px(28) or 0
-    table.insert(group, self:galleryGrid(month.list, self.content_h - heightOf(group) - more_h))
+    table.insert(group, self:galleryGrid(month.list, floor((self.content_h - heightOf(group) - more_h) * 0.94)))
     if month.books > shown then
         table.insert(group, vspan(6))
         table.insert(group, text(string.format(_("+%d more %s"), month.books - shown, Theme.open_heart),

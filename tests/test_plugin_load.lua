@@ -1087,4 +1087,18 @@ test("book details always show at least one highlight", function()
     assert(t:find("+1 more highlights"), t)
 end)
 
+test("every page uses the same side margins", function()
+    resetDB()
+    local view = openView()
+    local expected = Screen.w - 2 * 34
+    eq(view.inner_w, expected)
+    view:openBook(2)
+    eq(shown[#shown].inner_w, expected)
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    local cell = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
+    cell:onTap()
+    eq(shown[#shown].inner_w, expected)
+end)
+
 H.done()

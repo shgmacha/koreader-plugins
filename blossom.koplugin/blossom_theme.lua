@@ -48,6 +48,10 @@ Theme.shades = {
     Blitbuffer.Color8(0x88),
 }
 
+-- Page margins shared by every page: sides, and the space under the header.
+Theme.MARGIN = 34
+Theme.TOP_GAP = 22
+
 function Theme.px(n)
     return Screen:scaleBySize(n)
 end
