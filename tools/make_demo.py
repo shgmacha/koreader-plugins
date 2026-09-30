@@ -49,9 +49,34 @@ QUOTES = {
         ("21:04:12", "lighten", "Some flowers only open for the people who wait for them.", "this one ♡", 231, "Chapter 18"),
         ("21:32:40", "lighten", "She tucked the letter back into the book, as if the words might need somewhere soft to sleep.", "", 238, "Chapter 19"),
         ("21:40:02", None, "in Chapter 19", "", 240, "Chapter 19"),
+        ("2026-09-20 20:11:00", "lighten", "Grief is just love that has lost its address.", "", 96, "Chapter 7"),
+        ("2026-09-22 21:30:00", None, "in Chapter 10", "", 131, "Chapter 10"),
     ],
     "where-the-peonies-grow": [
         ("07:15:30", "underscore", "Every bloom is a small, brave decision to begin again.", "", 176, "Part One"),
+        ("2026-09-26 07:40:00", "lighten", "The shop smelled of rain and possibility.", "", 64, "Part One"),
+    ],
+    "the-lavender-letters": [
+        ("2026-09-14 22:05:00", "lighten", "Some summers are only ever meant to be remembered.", "sigh", 44, "Summer One"),
+        ("2026-09-19 21:15:00", None, "in Summer Two", "", 88, "Summer Two"),
+    ],
+    "the-teacup-society": [
+        ("2026-09-03 12:20:00", "lighten", "Tea is just an excuse to sit a little longer with people you love.", "", 51, "Sunday Two"),
+        ("2026-09-11 20:45:00", "lighten", "She poured the tea the way other people say sorry.", "", 202, "Sunday Nine"),
+    ],
+    "moonlight-at-willow-lane": [
+        ("2026-08-25 22:10:00", "lighten", "The moon kept the secrets the garden couldn't.", "", 140, "Chapter 9"),
+        ("2026-09-05 21:55:00", None, "in Chapter 21", "", 330, "Chapter 21"),
+    ],
+    "stardust-bakery": [
+        ("2026-07-12 07:30:00", "lighten", "Wishes rise best in a warm kitchen.", "cute!", 88, "The Second Loaf"),
+    ],
+    "paper-hearts-and-honey": [
+        ("2026-06-08 21:00:00", "lighten", "Bees and books both need patience, and a little bit of sun.", "", 120, "Chapter 6"),
+    ],
+    "midnight-cardigan-club": [
+        ("2026-04-20 23:10:00", "lighten", "Every mystery is just a knot waiting for gentle hands.", "", 150, "Row Twelve"),
+        ("2026-05-02 22:40:00", None, "in Row Thirty", "", 402, "Row Thirty"),
     ],
 }
 
@@ -208,7 +233,8 @@ def main():
 
         notes = []
         for t, drawer, text, note, pageno, chapter in QUOTES.get(stem, []):
-            fields = [f'["datetime"] = {lua_str(today.isoformat() + " " + t)}', f'["text"] = {lua_str(text)}',
+            when = t if len(t) > 8 else today.isoformat() + " " + t  # full date, or today at that time
+            fields = [f'["datetime"] = {lua_str(when)}', f'["text"] = {lua_str(text)}',
                       f'["pageno"] = {pageno}', f'["page"] = {pageno}', f'["chapter"] = {lua_str(chapter)}']
             if drawer:
                 fields.append(f'["drawer"] = "{drawer}"')

@@ -105,10 +105,24 @@ def rose_bloom(x=24, y=24, ink=INK, petal=PETAL, light=LIGHT):
             f'C{x-5} {y} {x-1} {y-4} {x+2} {y-2} C{x+4} {y} {x+1} {y+3} {x} {y+1}" fill="none" {st} stroke-width="1.8"/>')
     return out
 
+def calendar(ink=INK, paper="white", band=PETAL, dot=MID):
+    """A little desk calendar: rounded page, two binder rings, a soft top band and a heart on the grid."""
+    st = f'stroke="{ink}" stroke-linejoin="round" stroke-linecap="round"'
+    out = f'<rect x="6" y="9" width="36" height="33" rx="7" fill="{paper}" {st} stroke-width="2.4"/>'
+    out += f'<path d="M6 16 C6 12 9 9 13 9 L35 9 C39 9 42 12 42 16 L42 19 L6 19 Z" fill="{band}" {st} stroke-width="2.4"/>'
+    for x in (16, 32):
+        out += f'<rect x="{x-2}" y="4" width="4" height="9" rx="2" fill="{paper}" {st} stroke-width="2"/>'
+    for i, (x, y) in enumerate([(14, 26), (21, 26), (28, 26), (35, 26), (14, 33), (21, 33)]):
+        out += f'<circle cx="{x}" cy="{y}" r="1.8" fill="{dot}"/>'
+    out += (f'<path d="M31 37.5 C28 35.5 26 33.5 26 31.3 C26 29.8 27.2 28.8 28.5 28.8 C29.6 28.8 30.5 29.5 31 30.4 '
+            f'C31.5 29.5 32.4 28.8 33.5 28.8 C34.8 28.8 36 29.8 36 31.3 C36 33.5 34 35.5 31 37.5 Z" fill="{ink}"/>')
+    return out
+
 ICONS = {
     "tulip": tulip(), "daisy": daisy(), "sprout": sprout(), "rose": rose(), "bud": bud(),
     "sunflower": sunflower() , "butterfly": butterfly(), "ladybug": ladybug(), "close_flower": close_flower(), "back_flower": back_flower(), "lily": lily(), "rose_bloom": rose_bloom(),
     "rose_bloom_soft": rose_bloom(ink=MID, petal=LIGHT, light="#f6f6f6"),
+    "calendar": calendar(), "calendar_soft": calendar(ink=MID, band=LIGHT, dot=LEAF),
 }
 
 def bed(w=600, h=90):

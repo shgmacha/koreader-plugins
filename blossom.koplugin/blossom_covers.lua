@@ -44,19 +44,31 @@ function Covers:pathFor(md5)
     end
 end
 
---- CoverBrowser's cache first (fast), then extract from the book itself.
+--- Cover Browser's thumbnails smaller than this are only a fallback: they'd look blurry scaled up.
+Covers.SHARP_HEIGHT = 400
+
+--- A sharp cover: Cover Browser's cache when its thumbnail is big enough, else from the book itself,
+--- else whatever thumbnail there is.
 function Covers.loadCoverBB(file)
+    local thumb
     local bim = package.loaded["bookinfomanager"]
     if bim then
         local ok, info = pcall(bim.getBookInfo, bim, file, true)
-        if ok and info and info.has_cover and info.cover_bb then return info.cover_bb end
+        if ok and info and info.has_cover and info.cover_bb then
+            thumb = info.cover_bb
+            if thumb:getHeight() >= Covers.SHARP_HEIGHT then return thumb end
+        end
     end
     local ok, BookInfo = pcall(require, "apps/filemanager/filemanagerbookinfo")
     if ok then
         local ok2, bb = pcall(BookInfo.getCoverImage, BookInfo, nil, file)
-        if ok2 and bb then return bb end
+        if ok2 and bb then
+            if thumb and thumb.free then thumb:free() end
+            return bb
+        end
         if not ok2 then logger.warn("Blossom: cover extraction failed", file, bb) end
     end
+    return thumb
 end
 
 --- Returns a fresh blitbuffer (caller owns it) or nil.

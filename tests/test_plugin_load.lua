@@ -396,8 +396,11 @@ test("books page is an edge-to-edge cover gallery with % and hours", function()
     local view = openView()
     view:goToPage(3)
     local t = texts(view)
-    assert(t:find("Anathema\n1h 30m"), t)
-    assert(t:find("Atomic Habits\n25%% · 30m"), t)
+    assert(t:find("\n1h 30m\n"), t) -- no title line, just time (and a bow when finished)
+    assert(t:find("\n25%% · 30m\n"), t)
+    local titles = 0
+    walk(view, function(n) if n.text == "Anathema" then titles = titles + 1 end end)
+    eq(titles, 0)
     eq(count(view, "ProgressWidget"), 0)
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
@@ -463,7 +466,7 @@ test("month is a My-books-style gallery: 6 framed tiles per page, paged", functi
     eq(tiles, 6)
     eq(pagerState(view), "1/2")
     -- most-read first, with title and "% · time" like My books
-    assert(texts(view):find("Book 12\n10%% · 20m"), texts(view))
+    assert(texts(view):find("❀\nBook 12\n10%% · 20m"), texts(view)) -- placeholder art, no title line
     local function pagerArrow(glyph)
         local found
         walk(view, function(n) if n.text == glyph and n.enabled ~= nil and n.width == 44 then found = n end end)
@@ -474,7 +477,7 @@ test("month is a My-books-style gallery: 6 framed tiles per page, paged", functi
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
     eq(tiles, 6)
     eq(pagerState(view), "2/2")
-    assert(texts(view):find("Book 6\n"), texts(view))
+    assert(texts(view):find("Book 6\n", 1, true), texts(view))
     eq(pagerArrow("›").enabled, false)
     pagerArrow("‹").callback()
     eq(pagerState(view), "1/2")
@@ -639,9 +642,9 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     resetDB()
     local view = openView()
     view:goToPage(4)
-    -- header: ▦ ‹ Month › ❀ as plain icons (no frames); active black, inactive gray
+    -- header: [calendar] ‹ Month › [rose] as drawn icons (no frames); active dark, inactive soft
     local t0 = texts(view)
-    assert(t0:find("▦\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n"), t0)
+    assert(t0:find("‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n"), t0)
     local function modeButtons()
         local btns, icons = {}, {}
         walk(view, function(n)
@@ -652,13 +655,15 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
         return btns, icons
     end
     local btns, icons = modeButtons()
-    eq({ icons.covers.active, icons.calendar.active, icons.calendar.fgcolor }, { true, false, 0x99 })
+    eq({ icons.covers.active, icons.calendar.active }, { true, false })
+    assert(icons.calendar.file:find("icons/calendar_soft%.svg$"), "inactive calendar is soft")
     assert(icons.covers.file:find("icons/rose_bloom%.svg$"), "covers button is the drawn rose (dark while active)")
     walk(btns.calendar, function(n) assert(n.kind ~= "Framecontainer", "icons have no frame") end)
     btns.calendar:onTap()
     eq(view.month_mode, "calendar")
     local _, icons2 = modeButtons()
     assert(icons2.covers.file:find("rose_bloom_soft"), "inactive rose is soft")
+    assert(icons2.calendar.file:find("icons/calendar%.svg$"), "active calendar is dark")
     local t = texts(view)
     assert(t:find("Su\nMo\nTu"), t)
     assert(t:find("less"), t)
@@ -944,7 +949,7 @@ test("days without reading are not tappable", function()
     local n = 0
     walk(view, function(x)
         local tx = getmetatable(x) == BlossomView.Tappable and texts(x)
-        if tx and tx ~= "▦" and tx ~= "" then n = n + 1 end -- not the mode icons or the close flower
+        if tx and tx ~= "" then n = n + 1 end -- not the mode icons or the close flower (both text-free)
     end)
     eq(n, 0)
 end)
@@ -1327,7 +1332,7 @@ test("highlights and bookmarks pages are lists with the book they're from, paged
     local hl = gardenTap(view, "highlight")
     local t = texts(hl)
     assert(t:find("My highlights"), t)
-    eq(pagerState(hl), nil) -- a single page needs no pager
+    eq(pagerState(hl), "1/1") -- the pager is always there, a lone sprout on a single page
     assert(t:find("“A quote.”", 1, true), t)
     assert(t:find("Anathema · p. 5 · 15 Sep 2026", 1, true), t)
     assert(t:find("✎ aww", 1, true), t)
@@ -1573,6 +1578,24 @@ test("this book in Blossom opens the book being read", function()
     eq(q:currentBookId(), nil)
     q:show({ book = true })
     eq(lastOfKind("InfoMessage").text, "This book has no reading statistics yet ❀")
+end)
+
+test("covers: sharp thumbnails are used, small ones only as a fallback", function()
+    local Covers = require("blossom_covers")
+    local extracted
+    package.loaded["apps/filemanager/filemanagerbookinfo"] = {
+        getCoverImage = function(_, _doc, file) return extracted and fakeBB(600, 900, { file = file, full = true }) end,
+    }
+    package.loaded["bookinfomanager"] = { getBookInfo = function() return { has_cover = true, cover_bb = fakeBB(200, 300) } end }
+    extracted = true
+    local bb = Covers.loadCoverBB("/x.epub")
+    eq(bb.full, true) -- 300px thumbnail is too small: the book's own cover wins
+    extracted = false
+    eq(Covers.loadCoverBB("/x.epub"):getHeight(), 300) -- extraction failed: the thumbnail still helps
+    package.loaded["bookinfomanager"] = { getBookInfo = function() return { has_cover = true, cover_bb = fakeBB(400, 600) } end }
+    extracted = true
+    eq(Covers.loadCoverBB("/x.epub").full, nil) -- big enough thumbnail: no need to open the book
+    package.loaded["apps/filemanager/filemanagerbookinfo"] = nil
 end)
 
 H.done()

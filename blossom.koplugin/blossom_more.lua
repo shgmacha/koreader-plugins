@@ -102,7 +102,6 @@ function BlossomMore:listPage(avail_h)
 end
 
 function BlossomMore:buildFooter()
-    if self:pageCount() <= 1 then return VerticalGroup:new{ vspan(6) } end
     return VerticalGroup:new{
         align = "center",
         Theme.pager(self.page, self:pageCount(), function() self:onPrevPage() end, function() self:onNextPage() end),

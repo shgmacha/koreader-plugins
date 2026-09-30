@@ -676,25 +676,25 @@ end
 
 
 --- Gallery tile: one rounded frame holding the cover edge to edge, then title and progress.
-function BlossomView:galleryTile(b, w, cover_h, caption)
+function BlossomView:galleryTile(b, w, cover_h, caption, no_title)
     local border = Size.border.thin
     local inner = w - 2 * border
     local pad = px(6)
     local prefix = not b.finished and string.format("%d%% · ", floor(b.progress * 100 + 0.5)) or nil
+    local body = VerticalGroup:new{ align = "center", self:art(b, inner, cover_h, true, true), vspan(6) }
+    if not no_title then
+        table.insert(body, text(b.title, Theme.face("bold", 14), { max_width = inner - 2 * pad }))
+    end
+    table.insert(body, caption and caption(b, inner - 2 * pad)
+        or self:timeCaption(b, Theme.face("script", 15), inner - 2 * pad, prefix))
+    table.insert(body, vspan(7))
     return self:tappable(RoundedFrame:new{
         radius = px(10),
         bordersize = border,
         color = Theme.accent,
         background = Theme.bg,
         outside = Theme.bg,
-        VerticalGroup:new{
-            align = "center",
-            self:art(b, inner, cover_h, true, true),
-            vspan(6),
-            text(b.title, Theme.face("bold", 14), { max_width = inner - 2 * pad }),
-            caption and caption(b, inner - 2 * pad) or self:timeCaption(b, Theme.face("script", 15), inner - 2 * pad, prefix),
-            vspan(7),
-        },
+        body,
     }, b)
 end
 
@@ -711,7 +711,7 @@ function BlossomView:build_books()
     local pager_h = pager and px(44) or 0
     local shelf = VerticalGroup:new{
         align = "center",
-        self:galleryGrid(slice, floor((self.content_h - pager_h) * 0.86), SHELF_COLS, SHELF_ROWS),
+        self:galleryGrid(slice, floor((self.content_h - pager_h) * 0.86), SHELF_COLS, SHELF_ROWS, nil, true),
     }
     if pager then
         table.insert(shelf, vspan(10))
@@ -725,10 +725,11 @@ end
 
 --- Up to 3×2 framed covers fitting `avail_h`; narrower tiles when height is tight,
 --- so covers keep their book shape.
-function BlossomView:galleryGrid(books, avail_h, cols, rows, caption)
+function BlossomView:galleryGrid(books, avail_h, cols, rows, caption, no_title)
     cols, rows = cols or BOOK_COLS, rows or BOOK_ROWS
     local gap_x, gap_y = px(cols > 3 and 12 or 16), px(18)
-    local caption_h = text("Ag", Theme.face("bold", 14)):getSize().h + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
+    local caption_h = (no_title and 0 or text("Ag", Theme.face("bold", 14)):getSize().h)
+        + text("Ag", Theme.face("script", 15)):getSize().h + px(13)
     local border = 2 * Size.border.thin
     local row_h = floor((avail_h - gap_y * (rows - 1)) / rows)
     local cover_h = row_h - caption_h - border
@@ -741,7 +742,7 @@ function BlossomView:galleryGrid(books, avail_h, cols, rows, caption)
         local row = HorizontalGroup:new{ align = "top" }
         for i = (r - 1) * cols + 1, math.min(shown, r * cols) do
             if #row > 0 then table.insert(row, hspan(gap_x)) end
-            table.insert(row, self:galleryTile(books[i], tile_w, cover_h, caption))
+            table.insert(row, self:galleryTile(books[i], tile_w, cover_h, caption, no_title))
         end
         if r > 1 then table.insert(group, VerticalSpan:new{ width = gap_y }) end
         table.insert(group, row)
@@ -899,9 +900,8 @@ function BlossomView:build_month()
     local function mode(label, key)
         local active = self.month_mode == key
         -- "rose" is the drawn stemless rose (dark when active, soft when not); others are text glyphs.
-        local icon = label == "rose"
-            and Theme.icon(active and "rose_bloom" or "rose_bloom_soft", 26)
-            or text(label, Theme.face("ui", 22), { color = active and Theme.ink or Theme.bar })
+        -- drawn icons: dark when active, soft when not
+        local icon = Theme.icon(label .. (active and "" or "_soft"), 26)
         icon.mode_key, icon.active = key, active
         return Tappable:new{
             callback = function()
@@ -913,7 +913,7 @@ function BlossomView:build_month()
             CenterContainer:new{ dimen = Geom:new{ w = px(48), h = px(44) }, icon },
         }
     end
-    local left, right = mode("▦", "calendar"), mode("rose", "covers")
+    local left, right = mode("calendar", "calendar"), mode("rose_bloom", "covers")
     local side_w = math.max(left:getSize().w, right:getSize().w)
     local title_w = self.inner_w - 2 * side_w - 2 * px(40)
     local switcher = HorizontalGroup:new{
@@ -953,7 +953,7 @@ function BlossomView:build_month()
 
     local list, pager = self:pageOf("month:" .. key, month.list, BOOK_COLS * BOOK_ROWS)
     local pager_h = pager and px(44) or 0
-    table.insert(group, self:galleryGrid(list, floor((self.content_h - heightOf(group) - pager_h) * 0.94)))
+    table.insert(group, self:galleryGrid(list, floor((self.content_h - heightOf(group) - pager_h) * 0.94), nil, nil, nil, true))
     if pager then
         table.insert(group, vspan(6))
         table.insert(group, pager)
