@@ -466,6 +466,20 @@ function BlossomView:pageOf(key, items, per_page)
     return slice, pager
 end
 
+-- My books only shows books you've spent more than an hour with.
+local SHELF_MIN_SECONDS = 3600
+
+--- Books for My books (and its "See more …" shelf): most recent first, over an hour of reading.
+function BlossomView:shelfBooks()
+    local all = self.loadBooks and self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
+    if not all or #all == 0 then all = self.stats.recent or {} end
+    local shelf = {}
+    for _i, b in ipairs(all) do
+        if (b.seconds or 0) > SHELF_MIN_SECONDS then shelf[#shelf + 1] = b end
+    end
+    return shelf
+end
+
 --- The garden's "tell me more" pages.
 function BlossomView:openMore(key)
     local s = self.stats
@@ -488,7 +502,7 @@ function BlossomView:openMore(key)
     local page
     if key == "shelf" then
         -- My books' "See more …": the whole shelf, looking just like My books.
-        local list = self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
+        local list = self:shelfBooks()
         page = books(list, _("All my books"), count(list) .. " " .. Theme.flower, nil, nil, true)
     elseif key == "books" then
         local list = self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
@@ -704,13 +718,11 @@ end
 
 --- A gallery of recent covers with % read and time spent.
 function BlossomView:build_books()
-    local s = self.stats
-    if #s.recent == 0 then
-        return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
+    -- The 8 most recent books you've read for over an hour; "See more …" opens the whole shelf.
+    local all = self:shelfBooks()
+    if #all == 0 then
+        return self:emptyState(_("No books on your shelf yet ❀\nBooks you spend over an hour with will bloom here."))
     end
-    -- The 8 most recent books; "See more …" opens the whole shelf as its own gallery.
-    local all = self.loadBooks and self:period("all:recent", function() return { list = self.loadBooks("recent") } end).list
-    if not all or #all == 0 then all = s.recent end
     local per_page = SHELF_COLS * SHELF_ROWS
     local slice = {}
     for i = 1, math.min(per_page, #all) do slice[i] = all[i] end

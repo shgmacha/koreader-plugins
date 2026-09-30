@@ -405,20 +405,20 @@ test("books page is an edge-to-edge cover gallery with % and hours", function()
     view:goToPage(3)
     local t = texts(view)
     assert(t:find("\n1h 30m\n"), t) -- no title line, just time (and a bow when finished)
-    assert(t:find("\n25%% · 30m\n"), t)
+    assert(not t:find("25%% · 30m"), t) -- Atomic Habits (30 minutes) stays off My books
     local titles = 0
     walk(view, function(n) if n.text == "Anathema" then titles = titles + 1 end end)
     eq(titles, 0)
     eq(count(view, "ProgressWidget"), 0)
     local tiles = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
-    eq(tiles, 2)
+    eq(tiles, 1)
 end)
 
 test("books gallery shows at most 8 covers, 4 per row", function()
     resetDB()
     local list = {}
-    for i = 1, 9 do list[i] = { i, "Book " .. i, "A", "m" .. i, 100, 10, 60 } end
+    for i = 1, 9 do list[i] = { i, "Book " .. i, "A", "m" .. i, 100, 10, 3700 } end
     db.recent = cols(list)
     local view = openView()
     view:goToPage(3)
@@ -611,15 +611,15 @@ test("My books rows show small covers or flower placeholders", function()
     eq(count(view, "ImageWidget"), 1)
     local tappables = 0
     walk(view, function(n) if getmetatable(n) == BlossomView.Tappable then tappables = tappables + 1 end end)
-    eq(tappables, 3) -- two books + the close flower
+    eq(tappables, 2) -- the one book read over an hour + the close flower
 end)
 
 test("tapping a book opens its detail page", function()
     resetDB()
     local view = openView()
-    view:goToPage(3)
-    local row = findTappable(view, function(t) return t:find("Atomic Habits") end)
-    assert(row, "row for Atomic Habits")
+    view:openMore("books") -- the garden's gallery lists every book
+    local row = findTappable(shown[#shown], function(t) return t:find("Atomic Habits") end)
+    assert(row, "tile for Atomic Habits")
     eq(row:onTap(), true)
     local detail = shown[#shown]
     eq(getmetatable(detail) == require("blossom_detail"), true)
@@ -1613,6 +1613,30 @@ test("covers: sharp thumbnails are used, small ones only as a fallback", functio
     extracted = true
     eq(Covers.loadCoverBB("/x.epub").full, nil) -- big enough thumbnail: no need to open the book
     package.loaded["apps/filemanager/filemanagerbookinfo"] = nil
+end)
+
+test("My books and its shelf only keep books read for over an hour", function()
+    resetDB()
+    db.all_books = cols({
+        { 1, "Long", "A", "m1", 100, 50, 3601 },
+        { 2, "Exactly an hour", "A", "m2", 100, 50, 3600 },
+        { 3, "Short", "A", "m3", 100, 50, 3599 },
+    })
+    local view = openView()
+    view:goToPage(3)
+    local tiles = 0
+    walk(view, function(n) if getmetatable(n) == BlossomView.RoundedFrame then tiles = tiles + 1 end end)
+    eq(tiles, 1)
+    eq(#view:shelfBooks(), 1)
+    eq(view:shelfBooks()[1].title, "Long")
+    view:openMore("shelf")
+    assert(texts(shown[#shown]):find("1 book"), "the See more shelf is filtered too")
+    view:openMore("books")
+    assert(texts(shown[#shown]):find("3 books"), "the garden's books loved still lists every book")
+    db.all_books = cols({ { 3, "Short", "A", "m3", 100, 50, 60 } })
+    local empty = openView()
+    empty:goToPage(3)
+    assert(texts(empty):find("over an hour"), texts(empty))
 end)
 
 H.done()
