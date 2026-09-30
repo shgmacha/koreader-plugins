@@ -29,7 +29,7 @@ local GALLERY_PER_PAGE = 8
 local BlossomMore = InputContainer:extend{
     title = nil,
     subtitle = nil,
-    kind = "gallery",  -- "gallery", "highlights" or "bookmarks"
+    kind = "gallery",  -- "gallery", "highlights" or "bookmarks" (bookmarks may mix in highlights)
     items = nil,
     gallery = nil,     -- function(books, avail_h) -> widget (gallery pages)
     empty_text = nil,
@@ -97,7 +97,8 @@ function BlossomMore:listPage(avail_h)
     local i = self.starts[self.page]
     local gap = px(self.kind == "highlights" and 18 or 14)
     while i <= #self.items do
-        local row = self.kind == "highlights" and self:quoteRow(self.items[i]) or self:bookmarkRow(self.items[i])
+        local item = self.items[i]
+        local row = (self.kind == "highlights" or item.kind == "highlight") and self:quoteRow(item) or self:bookmarkRow(item)
         local h = group:getSize().h
         group:resetLayout()
         local needed = row:getSize().h + (#group > 0 and gap or 0)

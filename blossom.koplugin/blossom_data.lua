@@ -459,6 +459,7 @@ function Data.annotations(books, date)
         local when = a.datetime
         if type(when) ~= "string" or (date and when:sub(1, 10) ~= date) then return end
         local item = {
+            kind = is_highlight and "highlight" or "bookmark",
             title = book.title or "Untitled",
             book_id = book.id,
             time = when:sub(12, 16),

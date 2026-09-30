@@ -1339,4 +1339,22 @@ test("book details: reading days wears a drawn stemless rose", function()
     eq(texts(rose), "5")
 end)
 
+test("bookmarks page lists bookmarks and highlights together, newest first", function()
+    resetDB()
+    db.sidecar = { ["/books/a.epub"] = { doc_props = { title = "Anathema" }, annotations = {
+        { datetime = "2026-09-01 10:00:00", text = "in One", pageno = 4, chapter = "One" },
+        { datetime = "2026-09-03 10:00:00", drawer = "lighten", text = "Newest quote.", pageno = 9 },
+        { datetime = "2026-09-02 10:00:00", text = "in Two", pageno = 7, chapter = "Two" },
+    } } }
+    local view = openView()
+    view:openMore("bookmarks")
+    local t = texts(shown[#shown])
+    assert(t:find("2 bookmarks · 1 highlight, newest first", 1, true), t)
+    local q = t:find("“Newest quote.”", 1, true)
+    local b2 = t:find("p. 7 · Two", 1, true)
+    local b1 = t:find("p. 4 · One", 1, true)
+    assert(q and b2 and b1 and q < b2 and b2 < b1, t)
+    assert(t:find("Anathema · p. 9 · 3 Sep 2026", 1, true), t)
+end)
+
 H.done()

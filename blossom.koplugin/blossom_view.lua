@@ -504,15 +504,29 @@ function BlossomView:openMore(key)
         local list = self:period("week", self.loadWeek).list
         page = books(list, _("This week"), Data.fmtDuration(s.week_seconds) .. " ✧",
             nil, _("No books yet this week ❀"))
-    elseif key == "highlights" or key == "bookmarks" then
-        local list = (s.notes or {})[key] or {}
+    elseif key == "highlights" then
+        local list = (s.notes or {}).highlights or {}
         page = BlossomMore:new{
-            title = key == "highlights" and _("My highlights") or _("My bookmarks"),
-            subtitle = Data.plural(#list, key == "highlights" and _("highlight") or _("bookmark"),
-                key == "highlights" and _("highlights") or _("bookmarks")) .. ", newest first",
-            kind = key,
+            title = _("My highlights"),
+            subtitle = Data.plural(#list, _("highlight"), _("highlights")) .. ", newest first",
+            kind = "highlights",
             items = list,
-            empty_text = key == "highlights" and _("No highlights yet ♡") or _("No bookmarks yet ☆"),
+            empty_text = _("No highlights yet ♡"),
+        }
+    elseif key == "bookmarks" then
+        -- Like KOReader's own bookmarks list: page bookmarks and highlights together, newest first.
+        local notes = s.notes or {}
+        local list = {}
+        for _, b in ipairs(notes.bookmarks or {}) do list[#list + 1] = b end
+        for _, h in ipairs(notes.highlights or {}) do list[#list + 1] = h end
+        table.sort(list, function(a, b) return a.datetime > b.datetime end)
+        page = BlossomMore:new{
+            title = _("My bookmarks"),
+            subtitle = Data.plural(#(notes.bookmarks or {}), _("bookmark"), _("bookmarks")) .. " · "
+                .. Data.plural(#(notes.highlights or {}), _("highlight"), _("highlights")) .. ", newest first",
+            kind = "bookmarks",
+            items = list,
+            empty_text = _("No bookmarks yet ☆"),
         }
     end
     if page then UIManager:show(page, "flashui") end
