@@ -290,11 +290,12 @@ function Data.readingSpans(rows, min_days, max_gap)
         if row.date and row.id and (tonumber(row.seconds) or 0) > 0 then
             local b = by_book[row.id]
             if not b then
-                b = { id = row.id, title = row.title or "Untitled", dates = {} }
+                b = { id = row.id, title = row.title or "Untitled", dates = {}, seconds = {} }
                 by_book[row.id] = b
                 order[#order + 1] = row.id
             end
-            b.dates[#b.dates + 1] = row.date
+            if not b.seconds[row.date] then b.dates[#b.dates + 1] = row.date end
+            b.seconds[row.date] = (b.seconds[row.date] or 0) + tonumber(row.seconds)
         end
     end
     local spans = {}
@@ -304,7 +305,11 @@ function Data.readingSpans(rows, min_days, max_gap)
         local from, to = nil, nil
         local function close()
             if from and Data.daysBetween(from, to) + 1 >= min_days then
-                spans[#spans + 1] = { id = b.id, title = b.title, from = from, to = to }
+                local secs = {}
+                for d, v in pairs(b.seconds) do
+                    if d >= from and d <= to then secs[d] = v end
+                end
+                spans[#spans + 1] = { id = b.id, title = b.title, from = from, to = to, day_seconds = secs }
             end
         end
         for _, d in ipairs(b.dates) do
@@ -339,7 +344,12 @@ function Data.weekLanes(spans, week_start, max_lanes)
             for lane = 1, max_lanes or 2 do
                 if not lanes_end[lane] or lanes_end[lane] < col_from then
                     lanes_end[lane] = col_to
+                    local seconds = 0
+                    for d, v in pairs(span.day_seconds or {}) do
+                        if d >= from and d <= to then seconds = seconds + v end
+                    end
                     out[#out + 1] = {
+                        seconds = seconds,
                         id = span.id, title = span.title, lane = lane,
                         col_from = col_from, col_to = col_to,
                         continues_left = span.from < week_start,

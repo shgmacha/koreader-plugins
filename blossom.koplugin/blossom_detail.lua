@@ -64,7 +64,7 @@ end
 
 function BlossomDetail:build()
     local b = self.book
-    local gap = px(14)
+    local gap = px(22)
     local header = Theme.header(_("Book details"), self.width, function() self:onClose() end, self)
 
     -- Cover beside: title, author, snippet, wavy progress, "66% read · 250 of 380 pages".
@@ -84,11 +84,12 @@ function BlossomDetail:build()
             width = info_w,
             bgcolor = Theme.bg,
         },
+        vspan(2),
         text(b.authors ~= "" and b.authors or " ", Theme.face("script", 16),
             { color = Theme.soft_ink, max_width = info_w }),
     }
     if b.snippet then
-        table.insert(info, vspan(6))
+        table.insert(info, vspan(12))
         -- Natural height, at most 5 lines.
         local function snippet(height)
             return TextBoxWidget:new{
@@ -109,8 +110,9 @@ function BlossomDetail:build()
         end
         table.insert(info, box)
     end
-    table.insert(info, vspan(8))
+    table.insert(info, vspan(14))
     table.insert(info, Theme.wave(b.progress, info_w))
+    table.insert(info, vspan(4))
     local pages = b.total_pages > 0
         and string.format(_("%d of %d pages"), math.min(b.read_pages, b.total_pages), b.total_pages) or nil
     local progress_line = b.finished and _("finished") or string.format(_("%d%% read"), pct)
@@ -134,14 +136,14 @@ function BlossomDetail:build()
         top,
         VerticalSpan:new{ width = gap },
         Theme.rule(_("my reading"), self.inner_w),
-        vspan(6),
-        Theme.statGrid(self:statValues(), self.inner_w, 3),
-        vspan(6),
+        vspan(14),
+        Theme.statGrid(self:statValues(), self.inner_w, 3, { row_gap = 20 }),
+        vspan(14),
         text(string.format(_("first read %s · last read %s"), b.first or "—", b.last or "—"),
             Theme.face("script", 13), { color = Theme.soft_ink, max_width = self.inner_w }),
         VerticalSpan:new{ width = gap },
         Theme.rule(_("my highlights"), self.inner_w),
-        vspan(10),
+        vspan(16),
     }
     local function room()
         local h = content:getSize().h
@@ -161,8 +163,8 @@ function BlossomDetail:build()
             meta[#meta + 1] = h.date
             local q = Theme.quote(h.text, table.concat(meta, " · "), h.note, self.inner_w, 3)
             local more_h = i < #list and px(22) or 0
-            if q:getSize().h + px(12) + more_h > room() then q:free(); break end
-            if i > 1 then table.insert(content, vspan(12)) end
+            if q:getSize().h + px(18) + more_h > room() then q:free(); break end
+            if i > 1 then table.insert(content, vspan(18)) end
             table.insert(content, q)
             shown = i
         end

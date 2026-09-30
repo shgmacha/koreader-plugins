@@ -308,8 +308,10 @@ test("readingSpans joins nearby days per book, drops one-day reads", function()
     rows[#rows + 1] = { date = "2026-09-08", id = 3, title = "Solo", seconds = 0 } -- no reading
     local spans = Data.readingSpans(rows)
     eq(spans, {
-        { id = 1, title = "Happy Place", from = "2026-09-01", to = "2026-09-04" },
-        { id = 2, title = "Anathema", from = "2026-09-03", to = "2026-09-05" },
+        { id = 1, title = "Happy Place", from = "2026-09-01", to = "2026-09-04",
+          day_seconds = { ["2026-09-01"] = 60, ["2026-09-02"] = 60, ["2026-09-04"] = 60 } },
+        { id = 2, title = "Anathema", from = "2026-09-03", to = "2026-09-05",
+          day_seconds = { ["2026-09-03"] = 60, ["2026-09-05"] = 60 } },
     })
     eq(Data.readingSpans(rows, 2, 0)[1].to, "2026-09-02") -- no gaps allowed
     eq(Data.readingSpans(nil), {})
@@ -318,7 +320,8 @@ end)
 
 test("weekLanes clips spans to the week and stacks overlaps", function()
     local spans = {
-        { id = 1, title = "A", from = "2026-08-28", to = "2026-09-03" }, -- starts before the week
+        { id = 1, title = "A", from = "2026-08-28", to = "2026-09-03", -- starts before the week
+          day_seconds = { ["2026-08-29"] = 999, ["2026-08-30"] = 60, ["2026-09-03"] = 120 } },
         { id = 2, title = "B", from = "2026-09-01", to = "2026-09-02" }, -- overlaps A -> lane 2
         { id = 3, title = "C", from = "2026-09-04", to = "2026-09-12" }, -- after A ends -> lane 1, runs on
         { id = 4, title = "D", from = "2026-09-02", to = "2026-09-03" }, -- A and B busy -> no lane
@@ -326,6 +329,8 @@ test("weekLanes clips spans to the week and stacks overlaps", function()
     local lanes = Data.weekLanes(spans, "2026-08-30", 2) -- Sun 30 Aug .. Sat 5 Sep
     eq(#lanes, 3)
     eq({ lanes[1].title, lanes[1].lane, lanes[1].col_from, lanes[1].col_to, lanes[1].continues_left }, { "A", 1, 1, 5, true })
+    eq(lanes[1].seconds, 180) -- only the days inside this week
+    eq(lanes[2].seconds, 0)
     eq({ lanes[2].title, lanes[2].lane, lanes[2].col_from, lanes[2].col_to }, { "B", 2, 3, 4 })
     eq({ lanes[3].title, lanes[3].lane, lanes[3].col_from, lanes[3].col_to, lanes[3].continues_right }, { "C", 1, 6, 7, true })
     eq(Data.weekLanes(spans, "2026-10-04", 2), {})

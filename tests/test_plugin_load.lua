@@ -19,6 +19,12 @@ local function class(kind)
         return o
     end
     function C:getSize()
+        if self.kind == "Framecontainer" then
+            -- Like KOReader: a frame is its content plus padding, border and margin (width/height ignored).
+            local c = self[1] and self[1]:getSize() or { w = 0, h = 0 }
+            local extra = 2 * ((self.padding or 5) + (self.bordersize or 0) + (self.margin or 0))
+            return { w = c.w + extra, h = c.h + extra }
+        end
         if self.dimen and self.dimen.h then return { w = self.dimen.w, h = self.dimen.h } end
         if self.width and self.height then return { w = self.width, h = self.height } end
         if self.text then return { w = #self.text * 8, h = 20 } end
@@ -307,15 +313,16 @@ test("overview shows totals from the DB (cdata converted) and closes the DB", fu
     eq(db.opened, db.closed)
 end)
 
-test("week page shows chart, flowers and books with covers or placeholders", function()
+test("week page: frameless chart, summary below it, covers; no flower row", function()
     resetDB()
     local view = openView()
     view:onNextPage()
     eq(view.page, 2)
     local t = texts(view)
     assert(t:find("Books that kept me company"), t)
-    assert(t:find("my last 14 days"), t)
-    assert(t:find("❀$") or t:find("❀ ·") or t:find("· ❀"), "flower row")
+    assert(not t:find("my last 14 days"), t)
+    assert(t:find("We\n30m of reading ♡\nbest day: "), t) -- summary right after the chart
+    walk(view, function(n) assert(not (n.kind == "Framecontainer" and n.bordersize == 1 and n.background == 0xFF and n.padding ~= 0 and n.radius == 8 and not n.overlap_offset and n[1] and n[1].kind == "Horizontalgroup"), "no chart frame") end)
     eq(count(view, "ImageWidget"), 1)
     assert(t:find("❀\nLost"), "placeholder tile for unknown book")
     local bars = 0
@@ -580,10 +587,10 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     view:goToPage(4)
     -- header: ▦ Calendar ‹ Month › ❀ Covers, the active mode outlined + bold
     local t0 = texts(view)
-    assert(t0:find("▦ Calendar\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n❀ Covers"), t0)
+    assert(t0:find("▦\n‹\n" .. Data.monthTitle(tonumber(os.date("%Y")), tonumber(os.date("%m"))) .. "\n›\n❀\n"), t0)
     local cal_btn, cov_btn
-    walk(view, function(n) if n.text == "▦ Calendar" then cal_btn = n elseif n.text == "❀ Covers" then cov_btn = n end end)
-    eq({ cov_btn.text_font_bold, cal_btn.text_font_bold, cal_btn.bordersize }, { true, false, 0 })
+    walk(view, function(n) if n.text == "▦" then cal_btn = n elseif n.text == "❀" and n.callback then cov_btn = n end end)
+    eq({ cov_btn.text_font_bold, cal_btn.text_font_bold, cal_btn.bordersize, cov_btn.bordersize }, { true, false, 1, 2 })
     cal_btn.callback()
     eq(view.month_mode, "calendar")
     local t = texts(view)
@@ -599,7 +606,7 @@ test("month calendar toggle: Sunday-first grid and back to covers", function()
     -- previous month keeps calendar mode
     view:shiftMonth(-1)
     assert(texts(view):find("less"))
-    walk(view, function(n) if n.text == "❀ Covers" then cov_btn = n end end)
+    walk(view, function(n) if n.text == "❀" and n.callback then cov_btn = n end end)
     cov_btn.callback()
     eq(view.month_mode, "covers")
 end)
@@ -712,7 +719,7 @@ test("loadBook handles bad ids and missing rows", function()
     eq(p:loadBook(2).title, "Atomic Habits")
 end)
 
-test("calendar days show time; multi-day reads become book bars", function()
+test("calendar days show only the date; bars carry each book's time", function()
     resetDB()
     local y = Data.addDays(today, -1)
     local d2 = Data.addDays(today, -2)
@@ -729,9 +736,9 @@ test("calendar days show time; multi-day reads become book bars", function()
     view:goToPage(4)
     eq(count(view, "ImageWidget"), 0)
     local d = tostring(tonumber(os.date("%d")))
-    local day_tile = findTappable(view, function(t) return t:match("^" .. d .. "\n") end)
+    local day_tile = findTappable(view, function(t) return t == d end)
     assert(day_tile, "today's cell is tappable")
-    eq(texts(day_tile), d .. "\n10m")
+    eq(texts(day_tile), d) -- just the date; time lives on the book bars
     local bars = {}
     walk(view, function(n)
         if n.kind == "Framecontainer" and n.color == 0 and n.overlap_offset then bars[#bars + 1] = n end
@@ -741,11 +748,13 @@ test("calendar days show time; multi-day reads become book bars", function()
     table.sort(titles)
     -- Anathema (3 days) and Atomic Habits (2 days); split in two if the days cross a week
     assert(#bars >= 2 and #bars <= 4, #bars)
-    assert(titles[1] == "Anathema" and titles[#titles] == "Atomic Habits", table.concat(titles, ","))
+    assert(titles[1]:find("^Anathema · ") and titles[#titles]:find("^Atomic Habits · "), table.concat(titles, ","))
+    local all = table.concat(titles, ",")
+    assert(all:find("Atomic Habits · 5m") or all:find("Atomic Habits · 3m"), all)
     assert(not texts(view):find("Lost"), "one-day read has no bar")
     -- lanes stack: Atomic Habits sits above Anathema on shared days
     local ys = {}
-    for _, b in ipairs(bars) do ys[texts(b)] = b.overlap_offset[2] end
+    for _, b in ipairs(bars) do ys[texts(b):match("^(.-) · ")] = b.overlap_offset[2] end
     assert(ys["Atomic Habits"] < ys["Anathema"], "second lane is higher")
     assert(texts(view):find("less"))
 end)
@@ -762,7 +771,7 @@ end)
 local function openToday(view)
     view.month_mode = "calendar"
     view:goToPage(4)
-    local cell = findTappable(view, function(t) return t:match("^" .. tonumber(os.date("%d")) .. "\n") end)
+    local cell = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
     assert(cell, "today's cell is tappable")
     cell:onTap()
     local page = shown[#shown]
@@ -1014,6 +1023,22 @@ test("book details: many highlights are capped with +N more", function()
     assert(t:find("quote 1"), t)
     assert(t:find("more highlights"), t)
     assert(not t:find("quote 25"), t)
+end)
+
+test("calendar day cells keep their full size", function()
+    resetDB()
+    local view = openView()
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    local sizes = {}
+    walk(view, function(n)
+        if n.kind == "Framecontainer" and n.radius == 8 and n.width and n.width == n.height then
+            local s = n:getSize()
+            sizes[#sizes + 1] = s.w == n.width and s.h == n.height
+        end
+    end)
+    assert(#sizes >= 28)
+    for _, ok in ipairs(sizes) do assert(ok, "a day cell shrank to its content") end
 end)
 
 H.done()

@@ -416,18 +416,18 @@ function BlossomView:build_overview()
         { Theme.heart, tostring(s.streak), streak_label },
         { Theme.star, Data.fmtDuration(s.today_seconds), _("read today") },
         { "✧", Data.fmtDuration(s.week_seconds), _("this week") },
-    }, math.min(self.inner_w, px(600)), 3, { value_size = 21, label_size = 15, cell_h = 64, row_gap = 22 })
+    }, math.min(self.inner_w, px(600)), 3, { value_size = 21, label_size = 15, cell_h = 66, row_gap = 34 })
     local garden = VerticalGroup:new{
         align = "center",
         text(Data.greeting(self.hour), Theme.face("script", 24)),
-        vspan(22),
+        vspan(34),
         Theme.rule(_("my garden in numbers"), math.min(self.inner_w, px(600))),
-        vspan(18),
+        vspan(28),
         stats,
-        vspan(18),
+        vspan(30),
         text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
             Theme.face("script", 15), { color = Theme.soft_ink }),
-        vspan(26),
+        vspan(40),
         Theme.withBow(text(Data.affirmation(s.today), Theme.face("script", 19)), 24, "left"),
     }
     return CenterContainer:new{
@@ -455,25 +455,17 @@ function BlossomView:build_week()
         days[i] = { label = day.label, seconds = day.seconds,
                     top = day.seconds > 0 and Data.fmtDuration(day.seconds) or nil }
     end
-    local chart = barChart(days, s.best_day_index, cardInner(self.inner_w),
-        math.max(px(40), floor(self.content_h * 0.28)), #days)
-
-    local flowers = {}
-    for i, read in ipairs(s.flowers) do flowers[i] = read and Theme.flower or "·" end
-    local garden = VerticalGroup:new{
-        align = "center",
-        text(table.concat(flowers, " "), Theme.face("ui", 18), { max_width = self.inner_w }),
-        text(_("my last 14 days"), Theme.face("script", 14), { color = Theme.soft_ink }),
-    }
+    -- The bars without a frame, then how the week went.
+    local chart = barChart(days, s.best_day_index, self.inner_w,
+        math.max(px(40), floor(self.content_h * 0.28)), #days)[1]
 
     local group = VerticalGroup:new{
         align = "center",
-        headline,
-        VerticalSpan:new{ width = gap },
+        vspan(20),
         chart,
-        VerticalSpan:new{ width = gap },
-        garden,
-        VerticalSpan:new{ width = gap },
+        vspan(12),
+        headline,
+        vspan(24),
     }
 
     local week = self:period("week", self.loadWeek)
@@ -580,13 +572,12 @@ function BlossomView:galleryGrid(books, avail_h)
     return group
 end
 
---- A read day: the date in the corner and how long you read; book bars run along the bottom.
+--- A calendar day: shaded by reading, with the date in the corner; book bars run across it.
 function BlossomView:readDay(day, cell, border)
     local inner = cell - 2 * border
     local pad = px(5)
     local number = text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 11),
         { color = day.today and Theme.ink or Theme.soft_ink })
-    local time = text(Data.fmtDuration(day.seconds), Theme.face("bold", 13), { max_width = inner - 2 * pad })
     return FrameContainer:new{
         width = cell,
         height = cell,
@@ -596,14 +587,10 @@ function BlossomView:readDay(day, cell, border)
         bordersize = border,
         color = day.today and Theme.ink or Theme.petal,
         background = Theme.shades[day.level + 1],
-        VerticalGroup:new{
-            align = "left",
+        -- A fixed-size body: the date top-left, the rest left for book bars.
+        OverlapGroup:new{
+            dimen = Geom:new{ w = inner, h = inner },
             HorizontalGroup:new{ hspan(pad), number },
-            CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner - number:getSize().h }, VerticalGroup:new{
-                align = "center",
-                time,
-                VerticalSpan:new{ width = floor(inner * 0.36) }, -- leave the bottom for book bars
-            } },
         },
     }
 end
@@ -622,7 +609,7 @@ function BlossomView:bookBar(title, w, h)
             HorizontalGroup:new{
                 align = "center",
                 hspan(px(6)),
-                text(title, Theme.face("script", 11), { max_width = w - px(14) }),
+                text(title, Theme.face("script", 12), { max_width = w - px(14) }),
             },
         },
     }
@@ -637,12 +624,12 @@ function BlossomView:calendarWeek(cells, week_start, spans, cell, gap)
     end
     local width = 7 * cell + 6 * gap
     local week = OverlapGroup:new{ dimen = Geom:new{ w = width, h = cell }, row }
-    local bar_h = math.max(px(12), floor(cell * 0.17))
+    local bar_h = math.max(px(14), floor(cell * 0.2))
     local inset = px(3)
     for _, part in ipairs(Data.weekLanes(spans, week_start, 2)) do
         local x = (part.col_from - 1) * (cell + gap) + inset
         local w = (part.col_to - part.col_from + 1) * (cell + gap) - gap - 2 * inset
-        local bar = self:bookBar(part.title, w, bar_h)
+        local bar = self:bookBar(part.title .. " · " .. Data.fmtDuration(part.seconds), w, bar_h)
         bar.overlap_offset = { x, cell - inset - part.lane * (bar_h + px(2)) }
         table.insert(week, bar)
     end
@@ -688,27 +675,9 @@ function BlossomView:calendarGrid(avail_h, top_by_date, spans)
             local day = cal.cells[(r - 1) * 7 + c]
             if not day then
                 cells[c] = RectSpan:new{ width = cell, height = cell }
-            elseif day.seconds > 0 then
-                cells[c] = self:dayTappable(self:readDay(day, cell, day.today and Size.border.thick or Size.border.thin), day)
             else
-                local border = day.today and Size.border.thick or Size.border.thin
-                local inner = cell - 2 * border
-                local label = VerticalGroup:new{
-                    align = "center",
-                    text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 14),
-                        { color = day.future and Theme.accent or Theme.ink }),
-                }
-                cells[c] = self:dayTappable(FrameContainer:new{
-                    width = cell,
-                    height = cell,
-                    padding = 0,
-                    margin = 0,
-                    radius = px(8),
-                    bordersize = border,
-                    color = day.today and Theme.ink or Theme.petal,
-                    background = Theme.shades[day.level + 1],
-                    CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner }, label },
-                }, day)
+                -- Every day: shaded by reading, date in the corner (dayTappable skips days without reading).
+                cells[c] = self:dayTappable(self:readDay(day, cell, day.today and Size.border.thick or Size.border.thin), day)
             end
         end
         table.insert(grid, VerticalSpan:new{ width = gap })
@@ -749,16 +718,17 @@ function BlossomView:build_month()
             show_parent = self,
         }
     end
-    -- "▦ Calendar  ‹ September 2026 ›  ❀ Covers": the view you're on is outlined and bold.
+    -- "[▦]  ‹ September 2026 ›  [❀]": framed icon buttons; the view you're on has a bolder frame.
     local function mode(label, key)
         local active = self.month_mode == key
         return Button:new{
             text = label,
-            bordersize = active and Size.border.thin or 0,
-            radius = px(14),
+            bordersize = active and Size.border.thick or Size.border.thin,
+            radius = px(12),
             padding_h = px(10),
+            padding_v = px(4),
             text_font_face = "cfont",
-            text_font_size = 15,
+            text_font_size = 18,
             text_font_bold = active,
             callback = function()
                 if self.month_mode ~= key then
@@ -769,7 +739,7 @@ function BlossomView:build_month()
             show_parent = self,
         }
     end
-    local left, right = mode(_("▦ Calendar"), "calendar"), mode(_("❀ Covers"), "covers")
+    local left, right = mode("▦", "calendar"), mode("❀", "covers")
     local side_w = math.max(left:getSize().w, right:getSize().w)
     local title_w = self.inner_w - 2 * side_w - 2 * px(40)
     local switcher = HorizontalGroup:new{
