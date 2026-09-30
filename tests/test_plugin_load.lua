@@ -81,7 +81,11 @@ local stubs = {
     ["readhistory"] = { hist = {} },
     ["docsettings"] = {
         open = function(_, file)
-            return { readSetting = function() return db.sidecar_md5 and db.sidecar_md5[file] end }
+            if db.sidecar_error then error(db.sidecar_error) end
+            return { readSetting = function(_, key)
+                if key == "partial_md5_checksum" then return db.sidecar_md5 and db.sidecar_md5[file] end
+                return db.sidecar and db.sidecar[file] and db.sidecar[file][key]
+            end }
         end,
     },
     ["util"] = { partialMD5 = function(file) return "md5:" .. file end },
@@ -323,14 +327,29 @@ test("tiny screen falls back to a list instead of covers", function()
     assert(texts(view):find("❀ Anathema · 50m"), texts(view))
 end)
 
-test("books page lists progress ribbons and finished hearts", function()
+test("books page is a cover gallery with % and hours, no progress bars", function()
     resetDB()
     local view = openView()
     view:goToPage(3)
     local t = texts(view)
-    assert(t:find("finished ♥"), t)
-    assert(t:find("25%% · 30m"), t)
-    eq(count(view, "ProgressWidget"), 2)
+    assert(t:find("Anathema\n♥ · 1h 30m"), t)
+    assert(t:find("Atomic Habits\n25%% · 30m"), t)
+    eq(count(view, "ProgressWidget"), 0)
+    local tiles = 0
+    walk(view, function(n) if n.radius == 8 and n.padding == 4 then tiles = tiles + 1 end end)
+    eq(tiles, 2)
+end)
+
+test("books gallery shows at most 6 covers", function()
+    resetDB()
+    local list = {}
+    for i = 1, 9 do list[i] = { i, "Book " .. i, "A", "m" .. i, 100, 10, 60 } end
+    db.recent = cols(list)
+    local view = openView()
+    view:goToPage(3)
+    local tiles = 0
+    walk(view, function(n) if n.radius == 8 and n.padding == 4 then tiles = tiles + 1 end end)
+    eq(tiles, 6)
 end)
 
 test("month page: covers grid, navigation, no future months", function()
@@ -634,7 +653,7 @@ test("loadBook handles bad ids and missing rows", function()
     eq(p:loadBook(2).title, "Atomic Habits")
 end)
 
-test("calendar shows the most-read book's cover on its day; tap opens details", function()
+test("calendar shows the most-read book's cover on its day", function()
     resetDB()
     local view = openView()
     view.month_mode = "calendar"
@@ -644,8 +663,6 @@ test("calendar shows the most-read book's cover on its day; tap opens details", 
     eq(count(view, "ImageWidget"), 1) -- only days whose top book has a cover
     local day_tile = findTappable(view, function(t) return t == tostring(tonumber(os.date("%d"))) end)
     assert(day_tile, "today's cover cell is tappable")
-    day_tile:onTap()
-    eq(lastOfKind("InfoMessage").text, "Couldn't find this book's petals ❀") -- id 1 not in fake book table
     -- other days still show number + flower
     assert(texts(view):find("less"))
 end)
@@ -657,6 +674,100 @@ test("calendar without day data falls back to plain days", function()
     view.month_mode = "calendar"
     view:goToPage(4)
     eq(count(view, "ImageWidget"), 0)
+end)
+
+local function openToday(view)
+    view.month_mode = "calendar"
+    view:goToPage(4)
+    local cell = findTappable(view, function(t) return t:match("^" .. tonumber(os.date("%d")) .. "%f[%D]") end)
+    assert(cell, "today's cell is tappable")
+    cell:onTap()
+    local page = shown[#shown]
+    eq(getmetatable(page) == require("blossom_day"), true)
+    return page
+end
+
+test("tapping a day shows its books, highlights and bookmarks", function()
+    resetDB()
+    db.sidecar = { ["/books/a.epub"] = { annotations = {
+        { datetime = today .. " 21:00:00", drawer = "lighten", text = "She was the storm.", note = "chills ♡", pageno = 88, chapter = "Nine" },
+        { datetime = today .. " 20:00:00", text = "in Nine", pageno = 80, chapter = "Nine" },
+        { datetime = "2001-01-01 10:00:00", drawer = "lighten", text = "old one" },
+    } } }
+    local view = openView()
+    local page = openToday(view)
+    local t = texts(page)
+    assert(t:find(Data.dayTitle(today), 1, true), t)
+    assert(t:find("2 books · 1 highlight · 1 bookmark"), t)
+    assert(t:find("Books I read"), t)
+    assert(t:find("Anathema"), t)
+    assert(t:find("“She was the storm.”", 1, true), t)
+    assert(t:find("— Anathema · p. 88 · 21:00", 1, true), t)
+    assert(t:find("✎ chills ♡", 1, true), t)
+    assert(t:find("☆ Anathema · p. 80 · Nine · 20:00", 1, true), t)
+    assert(not t:find("old one"), t)
+    local s, e = Data.dayBounds(today)
+    eq(db.period_calls[#db.period_calls], { s, e })
+    -- book rows open the book's details
+    local row = findTappable(page, function(x) return x:find("Anathema") end)
+    assert(row, "book row tappable")
+    page:onSwipe(nil, { direction = "south" })
+    eq(closed[#closed] == page, true)
+    page:onCloseWidget()
+end)
+
+test("day page: empty notes and many highlights", function()
+    resetDB()
+    local view = openView()
+    local page = openToday(view)
+    local t = texts(page)
+    assert(t:find("No highlights this day"), t)
+    assert(t:find("No bookmarks this day"), t)
+
+    resetDB()
+    local many = {}
+    for i = 1, 30 do
+        many[i] = { datetime = string.format("%s 10:%02d:00", today, i), drawer = "lighten", text = "quote " .. i }
+    end
+    db.sidecar = { ["/books/a.epub"] = { annotations = many } }
+    Screen.h = 900
+    view = openView()
+    page = openToday(view)
+    t = texts(page)
+    assert(t:find("quote 1"), t)
+    assert(t:find("more highlights"), t)
+    assert(not t:find("quote 30"), t)
+end)
+
+test("day page survives unreadable sidecars and old bookmark format", function()
+    resetDB()
+    db.sidecar_error = "corrupt sidecar"
+    local page = openToday(openView())
+    assert(texts(page):find("No highlights this day"))
+    resetDB()
+    db.sidecar = { ["/books/a.epub"] = { bookmarks = {
+        { datetime = today .. " 09:00:00", highlighted = true, notes = "legacy quote", page = 5 },
+    } } }
+    page = openToday(openView())
+    assert(texts(page):find("“legacy quote”", 1, true))
+end)
+
+test("days without reading are not tappable", function()
+    resetDB()
+    local view = openView()
+    view.month_mode = "calendar"
+    view:shiftMonth(-1)
+    view:goToPage(4)
+    local n = 0
+    walk(view, function(x) if getmetatable(x) == BlossomView.Tappable then n = n + 1 end end)
+    eq(n, 0)
+end)
+
+test("in the reader, book settings are saved first so today's notes are on disk", function()
+    resetDB()
+    local saved = 0
+    openView({ document = {}, saveSettings = function() saved = saved + 1 end })
+    eq(saved, 1)
 end)
 
 H.done()

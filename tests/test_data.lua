@@ -241,4 +241,39 @@ test("calendar cells carry the day's top book", function()
     eq(Data.calendar(2026, 9, {}, "2026-09-30").cells[4].book, nil)
 end)
 
+test("day helpers", function()
+    local s, e = Data.dayBounds("2026-12-31")
+    eq(os.date("%Y-%m-%d %H:%M", s), "2026-12-31 00:00")
+    eq(os.date("%Y-%m-%d %H:%M", e), "2027-01-01 00:00")
+    eq(Data.dayTitle("2026-09-01"), "Tuesday, 1 Sep")
+    eq(Data.dayTitle("2026-09-30"), "Wednesday, 30 Sep")
+end)
+
+test("annotationsForDay: new and old sidecar formats, only that day, sorted", function()
+    local r = Data.annotationsForDay({
+        { title = "Dune", id = 3, annotations = {
+            { datetime = "2026-09-30 21:10:00", drawer = "lighten", text = "Fear is the mind-killer.", note = "", chapter = "Ch 1", pageno = 12 },
+            { datetime = "2026-09-30 08:00:00", text = "in Ch 2", chapter = "Ch 2", pageno = 40 }, -- bookmark
+            { datetime = "2026-09-29 23:59:59", drawer = "underscore", text = "yesterday" },
+            { datetime = "2026-09-30 07:00:00", drawer = "lighten", text = "early", note = "so true ♡", page = "/body/p[3]" },
+            { text = "no date", drawer = "lighten" },
+        } },
+        { title = "Old", id = 4, bookmarks = {
+            { datetime = "2026-09-30 12:00:00", highlighted = true, notes = "old quote", text = "my note", page = 7 },
+            { datetime = "2026-09-30 13:00:00", notes = "Page 9", page = 9 },
+        } },
+        { title = "Nothing" },
+    }, "2026-09-30")
+    eq(#r.highlights, 3)
+    eq({ r.highlights[1].text, r.highlights[1].note, r.highlights[1].page, r.highlights[1].time },
+       { "early", "so true ♡", nil, "07:00" })
+    eq({ r.highlights[2].text, r.highlights[2].note, r.highlights[2].page }, { "old quote", "my note", 7 })
+    eq({ r.highlights[3].text, r.highlights[3].note, r.highlights[3].chapter, r.highlights[3].book_id },
+       { "Fear is the mind-killer.", nil, "Ch 1", 3 })
+    eq(#r.bookmarks, 2)
+    eq({ r.bookmarks[1].title, r.bookmarks[1].page, r.bookmarks[1].chapter }, { "Dune", 40, "Ch 2" })
+    eq({ r.bookmarks[2].title, r.bookmarks[2].page, r.bookmarks[2].text }, { "Old", 9, nil })
+    eq(Data.annotationsForDay(nil, "2026-09-30"), { highlights = {}, bookmarks = {} })
+end)
+
 H.done()

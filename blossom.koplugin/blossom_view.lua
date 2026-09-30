@@ -3,6 +3,7 @@ Blossom's full-screen dashboard: five swipeable pages
 (overview, this week, my books, this month, my year) drawn in soft grays.
 --]]
 
+local BlossomDay = require("blossom_day")
 local BlossomDetail = require("blossom_detail")
 local BottomContainer = require("ui/widget/container/bottomcontainer")
 local Button = require("ui/widget/button")
@@ -16,7 +17,6 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
-local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
 local RectSpan = require("ui/widget/rectspan")
@@ -139,6 +139,7 @@ local BlossomView = InputContainer:extend{
     loadMonth = nil,   -- function(y, m) -> period summary
     loadYear = nil,    -- function(y) -> year summary
     loadBook = nil,    -- function(id) -> book detail
+    loadDay = nil,     -- function(date) -> books + highlights + bookmarks of that day
     getGoal = nil,     -- function() -> books per year
     setGoal = nil,     -- function(n)
     page = 1,
@@ -306,9 +307,14 @@ function BlossomView:tappable(widget, book)
     }
 end
 
---- A polaroid-style tile: cover (or a cute placeholder) and a caption.
-function BlossomView:tile(book, cover_w, cover_h)
-    local caption = Data.fmtDuration(book.seconds) .. (book.finished and (" " .. Theme.heart) or "")
+--- A polaroid-style tile: cover (or a cute placeholder) and caption lines.
+function BlossomView:tile(book, cover_w, cover_h, captions)
+    captions = captions or {
+        text(Data.fmtDuration(book.seconds) .. (book.finished and (" " .. Theme.heart) or ""),
+            Theme.face("script", 14), { max_width = cover_w }),
+    }
+    local body = VerticalGroup:new{ align = "center", self:art(book, cover_w, cover_h, true) }
+    for _, line in ipairs(captions) do table.insert(body, line) end
     return self:tappable(FrameContainer:new{
         bordersize = Size.border.thin,
         color = Theme.accent,
@@ -316,22 +322,18 @@ function BlossomView:tile(book, cover_w, cover_h)
         background = Theme.bg,
         padding = px(4),
         margin = 0,
-        VerticalGroup:new{
-            align = "center",
-            self:art(book, cover_w, cover_h, true),
-            text(caption, Theme.face("script", 14), { max_width = cover_w }),
-        },
+        body,
     }, book)
 end
 
 local TILE_PAD = 4
 local function tileChrome() return 2 * (px(TILE_PAD) + Size.border.thin) end
 
---- Sizes covers to fit `cols` per row within `avail_h` per row.
-function BlossomView:coverSize(cols, gap, avail_h)
+--- Sizes covers to fit `cols` per row within `avail_h` per row (with `lines` caption lines).
+function BlossomView:coverSize(cols, gap, avail_h, lines)
     local tile_w = floor((self.inner_w - (cols - 1) * gap) / cols)
     local cover_w = tile_w - tileChrome()
-    local caption_h = text("0m", Theme.face("script", 14)):getSize().h
+    local caption_h = text("0m", Theme.face("script", 14)):getSize().h * (lines or 1)
     local cover_h = math.min(floor(cover_w * COVER_RATIO), avail_h - caption_h - tileChrome())
     return cover_w, cover_h
 end
@@ -366,6 +368,16 @@ function BlossomView:openBook(id)
     UIManager:show(BlossomDetail:new{
         book = detail,
         art = function(book, w, h) return self:art(book, w, h, true) end,
+    }, "flashui")
+end
+
+function BlossomView:openDay(date)
+    local day = self.loadDay and self:period("day:" .. date, function() return self.loadDay(date) end)
+    if not day then return end
+    UIManager:show(BlossomDay:new{
+        day = day,
+        art = function(book, w, h) return self:art(book, w, h, false) end,
+        tappable = function(widget, book) return self:tappable(widget, book) end,
     }, "flashui")
 end
 
@@ -492,82 +504,46 @@ function BlossomView:build_week()
     return group
 end
 
+local BOOK_COLS, BOOK_ROWS = 3, 2
+
+--- A gallery of recent covers with % read and time spent.
 function BlossomView:build_books()
     local s = self.stats
     if #s.recent == 0 then
         return self:emptyState(_("No books on your shelf yet ❀\nOpen a book and it will bloom here."))
     end
-    local gap = px(8)
-    local n = #s.recent
-    local chrome = 2 * (Size.padding.default + Size.border.thin)
-    local row_h = math.min(px(96), floor((self.content_h - gap * (n - 1)) / n) - chrome)
-    local inner = cardInner(self.inner_w)
-    local thumb_h = row_h
-    local thumb_w = floor(thumb_h / COVER_RATIO)
-    local body_w = inner - thumb_w - px(12)
+    local gap = px(12)
+    local avail = floor((self.content_h - gap * (BOOK_ROWS - 1)) / BOOK_ROWS)
+    local cover_w, cover_h = self:coverSize(BOOK_COLS, gap, avail, 2)
     local group = VerticalGroup:new{ align = "center" }
-    for i, b in ipairs(s.recent) do
-        local pct = floor(b.progress * 100 + 0.5)
-        local status = b.finished
-            and string.format(_("finished %s · %s"), Theme.heart, Data.fmtDuration(b.seconds))
-            or string.format("%d%% · %s", pct, Data.fmtDuration(b.seconds))
-        local status_w = floor(body_w * 0.38)
-        local body = VerticalGroup:new{
-            align = "left",
-            text(b.title, Theme.face("bold", 17), { max_width = body_w }),
-            text(b.authors ~= "" and b.authors or " ", Theme.face("script", 15),
-                { color = Theme.soft_ink, max_width = body_w }),
-            vspan(4),
-            HorizontalGroup:new{
-                align = "center",
-                ProgressWidget:new{
-                    width = body_w - status_w - px(8),
-                    height = px(12),
-                    percentage = b.progress,
-                    radius = px(6),
-                    margin_h = 0,
-                    margin_v = 0,
-                    bordersize = Size.border.thin,
-                    bordercolor = Theme.accent,
-                    bgcolor = Theme.bg,
-                    fillcolor = Theme.accent,
-                },
-                hspan(px(8)),
-                text(status, Theme.face("script", 14), { max_width = status_w }),
-            },
-        }
-        if i > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
-        table.insert(group, self:tappable(Theme.card(HorizontalGroup:new{
-            align = "center",
-            self:art(b, thumb_w, thumb_h, false),
-            hspan(px(12)),
-            LeftContainer:new{ dimen = Geom:new{ w = body_w, h = row_h }, body },
-        }), b))
+    local shown = math.min(#s.recent, BOOK_COLS * BOOK_ROWS)
+    for r = 1, math.ceil(shown / BOOK_COLS) do
+        local row = HorizontalGroup:new{ align = "top" }
+        for i = (r - 1) * BOOK_COLS + 1, math.min(shown, r * BOOK_COLS) do
+            local b = s.recent[i]
+            local status = b.finished
+                and string.format("%s · %s", Theme.heart, Data.fmtDuration(b.seconds))
+                or string.format("%d%% · %s", floor(b.progress * 100 + 0.5), Data.fmtDuration(b.seconds))
+            if #row > 0 then table.insert(row, hspan(gap)) end
+            table.insert(row, self:tile(b, cover_w, cover_h, {
+                text(b.title, Theme.face("bold", 14), { max_width = cover_w }),
+                text(status, Theme.face("script", 15), { max_width = cover_w }),
+            }))
+        end
+        if r > 1 then table.insert(group, VerticalSpan:new{ width = gap }) end
+        table.insert(group, row)
     end
     return group
 end
 
---- A day with a book: its cover on the day's shade, the date on a little badge.
+--- A day with a book: a quiet little date in the corner, the cover beneath it.
 function BlossomView:coverDay(day, cell, border)
     local inner = cell - 2 * border
-    local pad = px(3)
-    local badge = FrameContainer:new{
-        padding = 0,
-        padding_left = px(4),
-        padding_right = px(4),
-        margin = 0,
-        radius = px(6),
-        bordersize = Size.border.thin,
-        color = Theme.accent,
-        background = Theme.bg,
-        text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 12)),
-    }
-    badge.overlap_offset = { pad, pad }
-    local cover = CenterContainer:new{
-        dimen = Geom:new{ w = inner, h = inner },
-        self:art(day.book, inner - 2 * pad, inner - 2 * pad, false),
-    }
-    return self:tappable(FrameContainer:new{
+    local number = text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 11),
+        { color = day.today and Theme.ink or Theme.soft_ink })
+    local num_h = number:getSize().h
+    local cover_h = inner - num_h - px(4)
+    return FrameContainer:new{
         width = cell,
         height = cell,
         padding = 0,
@@ -576,12 +552,24 @@ function BlossomView:coverDay(day, cell, border)
         bordersize = border,
         color = day.today and Theme.ink or Theme.petal,
         background = Theme.shades[day.level + 1],
-        OverlapGroup:new{
-            dimen = Geom:new{ w = inner, h = inner },
-            cover,
-            badge,
+        VerticalGroup:new{
+            align = "left",
+            HorizontalGroup:new{ hspan(px(5)), number },
+            CenterContainer:new{
+                dimen = Geom:new{ w = inner, h = cover_h },
+                self:art(day.book, inner - px(10), cover_h, false),
+            },
         },
-    }, day.book)
+    }
+end
+
+--- Days with reading open the day page.
+function BlossomView:dayTappable(widget, day)
+    if day.seconds <= 0 then return widget end
+    return Tappable:new{
+        callback = function() self:openDay(day.date) end,
+        widget,
+    }
 end
 
 function BlossomView:calendarGrid(avail_h, top_by_date)
@@ -615,7 +603,7 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
             if not day then
                 cells[c] = RectSpan:new{ width = cell, height = cell }
             elseif day.book and day.book.md5 and self:coverBB(day.book.md5) then
-                cells[c] = self:coverDay(day, cell, day.today and Size.border.thick or Size.border.thin)
+                cells[c] = self:dayTappable(self:coverDay(day, cell, day.today and Size.border.thick or Size.border.thin), day)
             else
                 local border = day.today and Size.border.thick or Size.border.thin
                 local inner = cell - 2 * border
@@ -627,7 +615,7 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
                 if day.level > 0 and inner > px(34) then
                     table.insert(label, text(Theme.flower, Theme.face("ui", 11)))
                 end
-                cells[c] = FrameContainer:new{
+                cells[c] = self:dayTappable(FrameContainer:new{
                     width = cell,
                     height = cell,
                     padding = 0,
@@ -637,7 +625,7 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
                     color = day.today and Theme.ink or Theme.petal,
                     background = Theme.shades[day.level + 1],
                     CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner }, label },
-                }
+                }, day)
             end
         end
         table.insert(grid, VerticalSpan:new{ width = gap })

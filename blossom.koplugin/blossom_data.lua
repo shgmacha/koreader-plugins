@@ -281,8 +281,13 @@ function Data.validGoal(goal)
     return math.floor(math.min(goal, 365))
 end
 
+--- "1 book", "3 books"
+function Data.plural(n, one, many)
+    return string.format("%d %s", n, n == 1 and one or many)
+end
+
 local function books(n)
-    return n == 1 and "1 book" or string.format("%d books", n)
+    return Data.plural(n, "book", "books")
 end
 
 --- Compares finished books with where an even pace would be today.
@@ -328,6 +333,58 @@ function Data.summarizeYear(y, raw)
         if month.seconds > best then best, year.best_month = month.seconds, i end
     end
     return year
+end
+
+-- One day ---------------------------------------------------------------------
+
+function Data.dayBounds(date)
+    local y, m, d = Data.parseDate(date)
+    return os.time{ year = y, month = m, day = d, hour = 0 },
+           os.time{ year = y, month = m, day = d + 1, hour = 0 }
+end
+
+--- "Tuesday, 30 Sep"
+function Data.dayTitle(date)
+    local out = os.date("%A, %d %b", noon(date)):gsub(", 0", ", ")
+    return out
+end
+
+--- Highlights and bookmarks created on `date`.
+--- books = {{ title, id, annotations = {...} (KOReader >= 2024), bookmarks = {...} (older sidecars) }}
+function Data.annotationsForDay(books, date)
+    local result = { highlights = {}, bookmarks = {} }
+    local function add(book, a, is_highlight, quote, note)
+        local when = a.datetime
+        if type(when) ~= "string" or when:sub(1, 10) ~= date then return end
+        local item = {
+            title = book.title or "Untitled",
+            book_id = book.id,
+            time = when:sub(12, 16),
+            datetime = when,
+            chapter = a.chapter,
+            page = tonumber(a.pageno) or (type(a.page) == "number" and a.page) or nil,
+            text = quote,
+            note = (type(note) == "string" and note ~= "") and note or nil,
+        }
+        table.insert(is_highlight and result.highlights or result.bookmarks, item)
+    end
+    for _, book in ipairs(books or {}) do
+        if type(book.annotations) == "table" then
+            for _, a in ipairs(book.annotations) do
+                -- Page bookmarks are the annotations without a highlight drawer.
+                add(book, a, a.drawer ~= nil, a.text, a.note)
+            end
+        elseif type(book.bookmarks) == "table" then
+            for _, bm in ipairs(book.bookmarks) do
+                -- Old format: highlighted text lived in `notes`, the user's note in `text`.
+                add(book, bm, bm.highlighted == true, bm.highlighted and bm.notes or nil, bm.highlighted and bm.text or nil)
+            end
+        end
+    end
+    local function byTime(x, y) return x.datetime < y.datetime end
+    table.sort(result.highlights, byTime)
+    table.sort(result.bookmarks, byTime)
+    return result
 end
 
 -- Book detail ------------------------------------------------------------------

@@ -106,12 +106,17 @@ end
 
 -- Database -------------------------------------------------------------------
 
---- Saves page stats the Statistics plugin still holds in memory, so today counts.
+--- Saves page stats the Statistics plugin still holds in memory, so today counts,
+--- and the open book's settings, so today's highlights are on disk.
 function Blossom:flushStats()
     local stats = self.ui and self.ui.statistics
     if stats and stats.insertDB then
         local ok, err = pcall(stats.insertDB, stats)
         if not ok then logger.warn("Blossom: could not flush statistics", err) end
+    end
+    if self.ui and self.ui.document and self.ui.saveSettings then
+        local ok, err = pcall(self.ui.saveSettings, self.ui)
+        if not ok then logger.warn("Blossom: could not save book settings", err) end
     end
 end
 
@@ -218,6 +223,28 @@ function Blossom:loadYear(y)
     return Data.summarizeYear(y, raw)
 end
 
+--- Books read on `date` plus the highlights and bookmarks made that day.
+function Blossom:loadDay(date)
+    local day = self:loadPeriod(Data.dayBounds(date))
+    day.date = date
+    local books = {}
+    for i, b in ipairs(day.list) do
+        local entry = { title = b.title, id = b.id }
+        local file = self.covers and self.covers:pathFor(b.md5)
+        if file then
+            local ok, err = pcall(function()
+                local doc_settings = require("docsettings"):open(file)
+                entry.annotations = doc_settings:readSetting("annotations")
+                if not entry.annotations then entry.bookmarks = doc_settings:readSetting("bookmarks") end
+            end)
+            if not ok then logger.warn("Blossom: could not read annotations", file, err) end
+        end
+        books[i] = entry
+    end
+    day.notes = Data.annotationsForDay(books, date)
+    return day
+end
+
 -- Settings -------------------------------------------------------------------
 
 function Blossom:getGoal()
@@ -240,16 +267,18 @@ function Blossom:show()
     local raw, err = self:loadRaw()
     local stats = Data.summarize(raw, today)
     stats.db_error = err ~= nil and err ~= "missing"
+    self.covers = Covers.new()
     UIManager:show(BlossomView:new{
         stats = stats,
         hour = tonumber(os.date("%H")),
-        covers = Covers.new(),
+        covers = self.covers,
         loadWeek = function()
             return self:loadPeriod(Data.weekBounds(today))
         end,
         loadMonth = function(y, m) return self:loadMonth(y, m) end,
         loadYear = function(y) return self:loadYear(y) end,
         loadBook = function(id) return self:loadBook(id) end,
+        loadDay = function(date) return self:loadDay(date) end,
         getGoal = function() return self:getGoal() end,
         setGoal = function(goal) self:setGoal(goal) end,
     }, "flashui")
