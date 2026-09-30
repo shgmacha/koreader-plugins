@@ -18,6 +18,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local ImageWidget = require("ui/widget/imagewidget")
 local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local ProgressWidget = require("ui/widget/progresswidget")
 local RectSpan = require("ui/widget/rectspan")
@@ -493,7 +494,22 @@ function BlossomView:build_week()
                 Data.fmtDuration(b.seconds)), Theme.face("script", 16), { max_width = self.inner_w }), b))
         end
     else
-        table.insert(group, self:tileRow(week.list, 1, shown, cover_w, cover_h, gap))
+        -- Just the covers, each in a soft rounded frame, shaped like a book.
+        cover_w = math.min(cover_w, floor(cover_h / COVER_RATIO))
+        cover_h = floor(cover_w * COVER_RATIO)
+        local row = HorizontalGroup:new{ align = "top" }
+        for i = 1, shown do
+            if i > 1 then table.insert(row, hspan(gap)) end
+            table.insert(row, self:tappable(Theme.RoundedFrame:new{
+                radius = px(8),
+                bordersize = Size.border.thin,
+                color = Theme.petal,
+                background = Theme.bg,
+                outside = Theme.bg,
+                self:art(week.list[i], cover_w, cover_h, true, true),
+            }, week.list[i]))
+        end
+        table.insert(group, row)
     end
     if week.books > shown then
         table.insert(group, text(string.format(_("+%d more %s"), week.books - shown, Theme.open_heart),
@@ -564,28 +580,13 @@ function BlossomView:galleryGrid(books, avail_h)
     return group
 end
 
---- A read day: the date in the corner, then how long you read and the book you read most.
+--- A read day: the date in the corner and how long you read; book bars run along the bottom.
 function BlossomView:readDay(day, cell, border)
     local inner = cell - 2 * border
     local pad = px(5)
     local number = text(tostring(day.day), Theme.face(day.today and "bold" or "ui", 11),
         { color = day.today and Theme.ink or Theme.soft_ink })
-    local body = VerticalGroup:new{
-        align = "center",
-        text(Data.fmtDuration(day.seconds), Theme.face("bold", 13), { max_width = inner - 2 * pad }),
-    }
-    if day.book and day.book.title then
-        table.insert(body, TextBoxWidget:new{
-            text = day.book.title,
-            face = Theme.face("script", 11),
-            width = inner - 2 * pad,
-            height = floor(2 * Theme.face("script", 11).size * 1.4),
-            height_overflow_show_ellipsis = true,
-            alignment = "center",
-            bgcolor = Theme.shades[day.level + 1],
-        })
-    end
-    local num_h = number:getSize().h
+    local time = text(Data.fmtDuration(day.seconds), Theme.face("bold", 13), { max_width = inner - 2 * pad })
     return FrameContainer:new{
         width = cell,
         height = cell,
@@ -598,9 +599,54 @@ function BlossomView:readDay(day, cell, border)
         VerticalGroup:new{
             align = "left",
             HorizontalGroup:new{ hspan(pad), number },
-            CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner - num_h - px(4) }, body },
+            CenterContainer:new{ dimen = Geom:new{ w = inner, h = inner - number:getSize().h }, VerticalGroup:new{
+                align = "center",
+                time,
+                VerticalSpan:new{ width = floor(inner * 0.36) }, -- leave the bottom for book bars
+            } },
         },
     }
+end
+
+--- A rounded bar with the book's title, spanning the days of a week it was read.
+function BlossomView:bookBar(title, w, h)
+    return FrameContainer:new{
+        padding = 0,
+        margin = 0,
+        radius = floor(h / 2),
+        bordersize = Size.border.thin,
+        color = Theme.ink,
+        background = Theme.bg,
+        LeftContainer:new{
+            dimen = Geom:new{ w = w - 2 * Size.border.thin, h = h - 2 * Size.border.thin },
+            HorizontalGroup:new{
+                align = "center",
+                hspan(px(6)),
+                text(title, Theme.face("script", 11), { max_width = w - px(14) }),
+            },
+        },
+    }
+end
+
+--- One calendar week: its cells with book bars laid over the bottom of them.
+function BlossomView:calendarWeek(cells, week_start, spans, cell, gap)
+    local row = HorizontalGroup:new{ align = "center" }
+    for i, w in ipairs(cells) do
+        if i > 1 then table.insert(row, hspan(gap)) end
+        table.insert(row, w)
+    end
+    local width = 7 * cell + 6 * gap
+    local week = OverlapGroup:new{ dimen = Geom:new{ w = width, h = cell }, row }
+    local bar_h = math.max(px(12), floor(cell * 0.17))
+    local inset = px(3)
+    for _, part in ipairs(Data.weekLanes(spans, week_start, 2)) do
+        local x = (part.col_from - 1) * (cell + gap) + inset
+        local w = (part.col_to - part.col_from + 1) * (cell + gap) - gap - 2 * inset
+        local bar = self:bookBar(part.title, w, bar_h)
+        bar.overlap_offset = { x, cell - inset - part.lane * (bar_h + px(2)) }
+        table.insert(week, bar)
+    end
+    return week
 end
 
 --- Days with reading open the day page.
@@ -612,7 +658,7 @@ function BlossomView:dayTappable(widget, day)
     }
 end
 
-function BlossomView:calendarGrid(avail_h, top_by_date)
+function BlossomView:calendarGrid(avail_h, top_by_date, spans)
     local cal = Data.calendar(self.year, self.month, self.stats.by_date, self.stats.today, top_by_date)
     local gap = px(4)
     local header_h = text("Su", Theme.face("bold", 14)):getSize().h
@@ -666,7 +712,7 @@ function BlossomView:calendarGrid(avail_h, top_by_date)
             end
         end
         table.insert(grid, VerticalSpan:new{ width = gap })
-        table.insert(grid, row(cells))
+        table.insert(grid, self:calendarWeek(cells, Data.addDays(cal.start, (r - 1) * 7), spans, cell, gap))
     end
     -- Legend: less ▢ ▢ ▢ ▢ more
     local legend = HorizontalGroup:new{ align = "center",
@@ -752,7 +798,7 @@ function BlossomView:build_month()
         VerticalSpan:new{ width = gap },
     }
     if calendar_mode then
-        table.insert(group, self:calendarGrid(self.content_h - heightOf(group), month.top_by_date))
+        table.insert(group, self:calendarGrid(self.content_h - heightOf(group), month.top_by_date, month.spans))
         return group
     end
     if month.books == 0 then

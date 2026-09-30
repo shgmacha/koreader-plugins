@@ -712,18 +712,41 @@ test("loadBook handles bad ids and missing rows", function()
     eq(p:loadBook(2).title, "Atomic Habits")
 end)
 
-test("calendar days show time read and the most-read book's name, no covers", function()
+test("calendar days show time; multi-day reads become book bars", function()
     resetDB()
+    local y = Data.addDays(today, -1)
+    local d2 = Data.addDays(today, -2)
+    db.day_books = cols({
+        { d2, 1, "md5:/books/a.epub", "Anathema", 300 },
+        { y, 1, "md5:/books/a.epub", "Anathema", 300 },
+        { today, 1, "md5:/books/a.epub", "Anathema", 900 },
+        { y, 2, "zzz", "Atomic Habits", 200 },
+        { today, 2, "zzz", "Atomic Habits", 100 },
+        { today, 7, "nope", "Lost", 50 }, -- one day only: no bar
+    })
     local view = openView()
     view.month_mode = "calendar"
     view:goToPage(4)
-    local month = view.periods[os.date("%Y-%m")]
-    eq(month.top_by_date[today].title, "Anathema")
     eq(count(view, "ImageWidget"), 0)
     local d = tostring(tonumber(os.date("%d")))
     local day_tile = findTappable(view, function(t) return t:match("^" .. d .. "\n") end)
     assert(day_tile, "today's cell is tappable")
-    eq(texts(day_tile), d .. "\n10m\nAnathema")
+    eq(texts(day_tile), d .. "\n10m")
+    local bars = {}
+    walk(view, function(n)
+        if n.kind == "Framecontainer" and n.color == 0 and n.overlap_offset then bars[#bars + 1] = n end
+    end)
+    local titles = {}
+    for _, b in ipairs(bars) do titles[#titles + 1] = texts(b) end
+    table.sort(titles)
+    -- Anathema (3 days) and Atomic Habits (2 days); split in two if the days cross a week
+    assert(#bars >= 2 and #bars <= 4, #bars)
+    assert(titles[1] == "Anathema" and titles[#titles] == "Atomic Habits", table.concat(titles, ","))
+    assert(not texts(view):find("Lost"), "one-day read has no bar")
+    -- lanes stack: Atomic Habits sits above Anathema on shared days
+    local ys = {}
+    for _, b in ipairs(bars) do ys[texts(b)] = b.overlap_offset[2] end
+    assert(ys["Atomic Habits"] < ys["Anathema"], "second lane is higher")
     assert(texts(view):find("less"))
 end)
 

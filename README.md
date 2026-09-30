@@ -24,9 +24,9 @@ Swipe left / right (or use the page-turn buttons) between five pages:
 | Page | What you see |
 |------|--------------|
 | **My reading garden** | A greeting, books loved, total reading time, pages turned, your day streak ♥, today, this week, your longest streak and a little affirmation |
-| **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (❀ = you read that day) and the covers of the **books that kept you company** this week |
+| **This week** | A bar chart of the last 7 days (♥ over your best day), a 14-day flower row (❀ = you read that day) and just the covers of the **books that kept you company** this week |
 | **My books** | An edge-to-edge gallery of your 6 most recent covers with % read and time spent (a little bow when finished) |
-| **This month** | Month totals and a **cover gallery** (like My books) of what you read that month, or switch to **▦ Calendar** (header: ▦ Calendar ‹ Month › ❀ Covers) for a Sunday-first calendar shaded by how long you read, with each day's time and book. Tap a day to see the books you read, and the highlights and bookmarks you made, that day; use ‹ › to look back at earlier months |
+| **This month** | Month totals and a **cover gallery** (like My books) of what you read that month, or switch to **▦ Calendar** (header: ▦ Calendar ‹ Month › ❀ Covers) for a Sunday-first calendar shaded by how long you read, with each day's time and **book bars** stretching across the days you kept reading a book (overlapping books stack). Tap a day to see the books you read, and the highlights and bookmarks you made, that day; use ‹ › to look back at earlier months |
 | **My year** | Your **yearly reading goal** (books finished) as a wavy line with a heart riding along it, "67% of my goal · right on track", your year in numbers and reading by month. Tap the little **✎** beside your goal to change it |
 
 Tap any book to open its **book details**: cover, title, author, a short snippet, a wavy progress line,

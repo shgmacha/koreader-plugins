@@ -270,7 +270,87 @@ function Data.calendar(y, m, by_date, today, top_by_date)
         }
     end
     while #cells % 7 ~= 0 do cells[#cells + 1] = false end
-    return { headers = Data.WEEKDAYS, cells = cells, rows = #cells / 7 }
+    local first = string.format("%04d-%02d-01", y, m)
+    return { headers = Data.WEEKDAYS, cells = cells, rows = #cells / 7,
+             start = Data.addDays(first, -(first_wday - 1)) }
+end
+
+--- Days apart between two "YYYY-MM-DD" dates (b - a).
+function Data.daysBetween(a, b)
+    return math.floor((noon(b) - noon(a)) / 86400 + 0.5)
+end
+
+--- Stretches of days spent with the same book, for calendar bars.
+--- rows = {{date, id, title, seconds}}; days within `max_gap` missed days join one stretch;
+--- stretches shorter than `min_days` calendar days are dropped.
+function Data.readingSpans(rows, min_days, max_gap)
+    min_days, max_gap = min_days or 2, max_gap or 1
+    local by_book, order = {}, {}
+    for _, row in ipairs(rows or {}) do
+        if row.date and row.id and (tonumber(row.seconds) or 0) > 0 then
+            local b = by_book[row.id]
+            if not b then
+                b = { id = row.id, title = row.title or "Untitled", dates = {} }
+                by_book[row.id] = b
+                order[#order + 1] = row.id
+            end
+            b.dates[#b.dates + 1] = row.date
+        end
+    end
+    local spans = {}
+    for _, id in ipairs(order) do
+        local b = by_book[id]
+        table.sort(b.dates)
+        local from, to = nil, nil
+        local function close()
+            if from and Data.daysBetween(from, to) + 1 >= min_days then
+                spans[#spans + 1] = { id = b.id, title = b.title, from = from, to = to }
+            end
+        end
+        for _, d in ipairs(b.dates) do
+            if to and Data.daysBetween(to, d) <= max_gap + 1 then
+                to = d
+            else
+                close()
+                from, to = d, d
+            end
+        end
+        close()
+    end
+    table.sort(spans, function(x, y)
+        if x.from ~= y.from then return x.from < y.from end
+        if x.to ~= y.to then return x.to > y.to end
+        return x.title < y.title
+    end)
+    return spans
+end
+
+--- The parts of `spans` inside the week starting `week_start` (7 columns), each put in the
+--- lowest free lane (1 = bottom). Parts that need more than `max_lanes` lanes are left out.
+function Data.weekLanes(spans, week_start, max_lanes)
+    local week_end = Data.addDays(week_start, 6)
+    local lanes_end, out = {}, {}
+    for _, span in ipairs(spans or {}) do
+        if span.to >= week_start and span.from <= week_end then
+            local from = span.from > week_start and span.from or week_start
+            local to = span.to < week_end and span.to or week_end
+            local col_from = Data.daysBetween(week_start, from) + 1
+            local col_to = Data.daysBetween(week_start, to) + 1
+            for lane = 1, max_lanes or 2 do
+                if not lanes_end[lane] or lanes_end[lane] < col_from then
+                    lanes_end[lane] = col_to
+                    out[#out + 1] = {
+                        id = span.id, title = span.title, lane = lane,
+                        col_from = col_from, col_to = col_to,
+                        continues_left = span.from < week_start,
+                        continues_right = span.to > week_end,
+                    }
+                    break
+                end
+            end
+        end
+    end
+    return out
 end
 
 -- Yearly goal ----------------------------------------------------------------

@@ -196,6 +196,7 @@ function Blossom:loadMonth(y, m)
             { "date", "id", "md5", "title", "seconds" })
     end)
     month.top_by_date = Data.topBookPerDay(day_rows)
+    month.spans = Data.readingSpans(day_rows)
     return month
 end
 
