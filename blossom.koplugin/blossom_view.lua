@@ -77,26 +77,38 @@ function Bar:paintTo(bb, x, y)
     end
 end
 
---- The yearly goal bar: a soft rounded track, a gray fill with a thin outline.
-local GoalBar = Widget:extend{
+--- The yearly goal as a wavy line: bold and solid up to where you are, soft and dotted after.
+local GoalWave = Widget:extend{
     width = 0,
     height = 0,
     ratio = 0,
+    mid = 0,        -- y of the wave's centre line
+    amplitude = 6,
+    period = 48,
 }
 
-function GoalBar:getSize()
+--- Wave height at x (relative to the widget's top).
+function GoalWave:waveY(x)
+    return self.mid + self.amplitude * math.sin(2 * math.pi * x / self.period)
+end
+
+function GoalWave:getSize()
     return Geom:new{ w = self.width, h = self.height }
 end
 
-function GoalBar:paintTo(bb, x, y)
+function GoalWave:paintTo(bb, x, y)
     self.dimen = Geom:new{ x = x, y = y, w = self.width, h = self.height }
-    local r = floor(self.height / 2)
-    bb:paintRoundedRect(x, y, self.width, self.height, Theme.card_bg, r)
-    if self.ratio > 0 then
-        local fill = math.min(self.width, math.max(self.height, floor(self.width * self.ratio + 0.5)))
-        bb:paintRoundedRect(x, y, fill, self.height, Theme.bar, r)
+    local done_w = floor(self.width * self.ratio + 0.5)
+    local thick, thin = Theme.px(4), Theme.px(2)
+    local dot = Theme.px(5)
+    for dx = 0, self.width - 1 do
+        local wy = floor(self:waveY(dx) + 0.5)
+        if dx <= done_w and self.ratio > 0 then
+            bb:paintRect(x + dx, y + wy - floor(thick / 2), 1, thick, Theme.accent)
+        elseif floor(dx / dot) % 2 == 0 then
+            bb:paintRect(x + dx, y + wy - floor(thin / 2), 1, thin, Theme.shades[3])
+        end
     end
-    bb:paintBorder(x, y, self.width, self.height, Size.border.thin, Theme.accent, r)
 end
 
 --- A rounded frame whose content may touch its edges (like a cover flush at the top):
@@ -820,22 +832,25 @@ function BlossomView:build_month()
     return group
 end
 
---- The goal bar with a bow charm sitting where the fill ends.
-function BlossomView:goalBar(ratio, width)
+--- The wavy goal line with a heart riding it where you are.
+function BlossomView:goalWave(ratio, width)
     ratio = math.max(0, math.min(1, ratio))
-    local bar_h = px(18)
-    local bow_w = px(38)
-    local bow = Theme.bow(38)
-    local bow_h = floor(bow_w * 0.75)
-    local group_h = math.max(bar_h, bow_h)
-    local bar = GoalBar:new{ width = width, height = bar_h, ratio = ratio }
-    bar.overlap_offset = { 0, floor((group_h - bar_h) / 2) }
+    local heart_w = px(30)
+    local heart = Theme.heartIcon(30)
+    local heart_h = floor(heart_w * 44 / 48)
+    local amplitude = px(6)
+    local mid = px(2) + amplitude + floor(heart_h / 2)
+    local height = mid + amplitude + floor(heart_h / 2) + px(2)
+    local wave = GoalWave:new{ width = width, height = height, ratio = ratio, mid = mid,
+                               amplitude = amplitude, period = px(48) }
     local fill_x = floor(width * ratio)
-    bow.overlap_offset = { math.max(0, math.min(width - bow_w, fill_x - floor(bow_w / 2))), floor((group_h - bow_h) / 2) }
+    local heart_x = math.max(0, math.min(width - heart_w, fill_x - floor(heart_w / 2)))
+    local heart_y = floor(wave:waveY(heart_x + floor(heart_w / 2)) - heart_h / 2)
+    heart.overlap_offset = { heart_x, heart_y }
     return OverlapGroup:new{
-        dimen = Geom:new{ w = width, h = group_h },
-        bar,
-        bow,
+        dimen = Geom:new{ w = width, h = height },
+        wave,
+        heart,
     }
 end
 
@@ -848,28 +863,35 @@ function BlossomView:build_year()
     local fresh = year.seconds == 0 and year.finished == 0
 
     -- The goal, in one soft borderless card with room to breathe.
+    local wave_w = floor(card_inner * 0.9)
+    local pct = floor(math.min(1, year.finished / goal) * 100 + 0.5)
+    local ends = OverlapGroup:new{
+        dimen = Geom:new{ w = wave_w, h = text("0", Theme.face("script", 14)):getSize().h },
+        text(_("start"), Theme.face("script", 14), { color = Theme.soft_ink }),
+    }
+    local goal_label = text(string.format(_("%d books ♡"), goal), Theme.face("script", 14), { color = Theme.soft_ink })
+    goal_label.overlap_align = "right"
+    table.insert(ends, goal_label)
     local hero = VerticalGroup:new{
         align = "center",
         vspan(6),
         text(string.format(_("my %d reading goal"), self.this_year), Theme.face("script", 16), { color = Theme.soft_ink }),
-        vspan(4),
+        vspan(2),
         HorizontalGroup:new{
             align = "center",
             text(tostring(year.finished), Theme.face("script_bold", 40)),
             text(string.format(_(" of %d books"), goal), Theme.face("script", 22)),
         },
-        vspan(12),
-        self:goalBar(year.finished / goal, floor(card_inner * 0.86)),
+        vspan(8),
+        self:goalWave(year.finished / goal, wave_w),
+        ends,
         vspan(10),
+        text(string.format(_("%d%% of my goal · %s"), pct, fresh and _("a fresh year to bloom ❀") or status.message),
+            Theme.face("script", 17), { max_width = card_inner }),
+        vspan(14),
+        Theme.pillButton(_("✎  change my goal"), function() self:editGoal(goal) end, self),
+        vspan(8),
     }
-    local pct = floor(math.min(1, year.finished / goal) * 100 + 0.5)
-    table.insert(hero, text(string.format(_("%d%% of my goal"), pct), Theme.face("script_bold", 20)))
-    table.insert(hero, vspan(4))
-    table.insert(hero, text(fresh and _("a fresh year to bloom ❀") or status.message,
-        Theme.face("script", 17), { color = Theme.soft_ink, max_width = card_inner }))
-    table.insert(hero, vspan(14))
-    table.insert(hero, Theme.pillButton(_("✎  change my goal"), function() self:editGoal(goal) end, self))
-    table.insert(hero, vspan(8))
 
     local group = VerticalGroup:new{
         align = "center",
@@ -971,7 +993,7 @@ end
 BlossomView.PAGES = PAGES
 BlossomView.Bar = Bar
 BlossomView.Tappable = Tappable
-BlossomView.GoalBar = GoalBar
+BlossomView.GoalWave = GoalWave
 BlossomView.RoundedFrame = RoundedFrame
 
 return BlossomView

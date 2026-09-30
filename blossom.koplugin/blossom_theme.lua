@@ -106,6 +106,17 @@ function Theme.bow(size)
     }
 end
 
+--- A little drawn heart (filled soft gray, dark outline). `size` is its width.
+function Theme.heartIcon(size)
+    size = Theme.px(size or 24)
+    return ImageWidget:new{
+        file = Theme.dir .. "/icons/heart.svg",
+        width = size,
+        height = math.floor(size * 44 / 48),
+        alpha = true,
+    }
+end
+
 --- A widget with a bow beside it ("left" or "right", default right).
 function Theme.withBow(widget, size, side)
     local bow, gap = Theme.bow(size), HorizontalSpan:new{ width = Theme.px(6) }
