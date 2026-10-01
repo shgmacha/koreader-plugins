@@ -37,6 +37,6 @@ function H.done()
 end
 
 -- Run from the repo root: make plugin modules requirable.
-package.path = "./blossom.koplugin/?.lua;./tests/?.lua;" .. package.path
+package.path = "./blossom.koplugin/?.lua;./blossomreads.koplugin/?.lua;./tests/?.lua;" .. package.path
 
 return H
