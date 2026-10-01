@@ -16,7 +16,7 @@ local STOP = { signin = true, network = true, blocked = true }
 -- ctx = {
 --   api,                         -- blossomreads_api instance
 --   books,                       -- map file -> entry (mutated in place)
---   items = { { file, now = { pct, status } } },
+--   items = { { file, now = { pct, status }, shelves = { collection shelf slugs } } },
 --   opts = { complete_at_99 },
 --   goal = { get = fn -> n|nil, set = fn(n), synced = n|nil } or nil,
 --   time,
@@ -28,9 +28,27 @@ function Engine.run(ctx)
         local entry = ctx.books[item.file]
         if entry and entry.gid then
             local before = s.pushed + s.shelved
-            for _, action in ipairs(Plan.planBook(item.now, entry, ctx.opts)) do
+            local opts = { complete_at_99 = (ctx.opts or {}).complete_at_99, collection_shelves = item.shelves }
+            for _, action in ipairs(Plan.planBook(item.now, entry, opts)) do
                 local ok, err
-                if action.type == "shelf" then
+                if action.type == "shelf" and action.custom then
+                    -- A collection's own shelf, alongside the reading status.
+                    ok, err = ctx.api:setShelf(entry.gid, action.shelf)
+                    if ok then
+                        entry.collections_sent = entry.collections_sent or {}
+                        table.insert(entry.collections_sent, action.shelf)
+                        s.shelved = s.shelved + 1
+                    end
+                elseif action.type == "unshelf" then
+                    ok, err = ctx.api:unshelf(entry.gid, action.shelf)
+                    if ok then
+                        for i = #(entry.collections_sent or {}), 1, -1 do
+                            if entry.collections_sent[i] == action.shelf then table.remove(entry.collections_sent, i) end
+                        end
+                        if #entry.collections_sent == 0 then entry.collections_sent = nil end
+                        s.shelved = s.shelved + 1
+                    end
+                elseif action.type == "shelf" then
                     ok, err = ctx.api:setShelf(entry.gid, action.shelf)
                     if ok then
                         entry.pushed_shelf = action.shelf

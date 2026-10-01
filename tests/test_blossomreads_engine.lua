@@ -19,6 +19,11 @@ local function fakeApi(o)
         return nil, err
     end
     function api:progress(gid, pct) return call("progress", gid, pct) end
+    function api:unshelf(gid, shelf)
+        local ok, err = call("unshelf", gid, shelf)
+        if ok then return true end
+        return nil, err
+    end
     function api:challenge()
         if self.ch_err then return nil, self.ch_err end
         return self.ch and { goal = self.ch.goal, read = self.ch.read }
@@ -119,6 +124,35 @@ end)
 test("engine/goal: failed goal push keeps synced as it was", function()
     local s = Engine.run{ api = fakeApi{ challenge = { goal = 24 }, goal_err = "server" }, books = {}, items = {}, goal = goal(30, 24) }
     eq({ s.synced, s.failed }, { nil, 1 })
+end)
+
+test("engine/collections: TBR + favorites for an unstarted book, then nothing on re-run", function()
+    local api, b = fakeApi(), books()
+    local items = { { file = "/b/dune.epub", now = {}, shelves = { "to-read", "favorites" } } }
+    local s = Engine.run{ api = api, books = b, items = items }
+    eq(api.calls, { "shelf:1=to-read", "shelf:1=favorites" })
+    eq({ b["/b/dune.epub"].pushed_shelf, b["/b/dune.epub"].collections_sent, s.books, s.shelved }, { "to-read", { "favorites" }, 1, 2 })
+    api.calls = {}
+    Engine.run{ api = api, books = b, items = items }
+    eq(api.calls, {})
+end)
+
+test("engine/collections: leaving favorites takes it off the shelf; a failed removal is retried", function()
+    local b = { ["/b/dune.epub"] = { gid = "1", pushed_shelf = "to-read", collections_sent = { "favorites" } } }
+    local api = fakeApi{ fail = { ["1"] = "server" } }
+    local items = { { file = "/b/dune.epub", now = {}, shelves = { "to-read" } } }
+    Engine.run{ api = api, books = b, items = items }
+    eq(b["/b/dune.epub"].collections_sent, { "favorites" })
+    api.fail, api.calls = {}, {}
+    Engine.run{ api = api, books = b, items = items }
+    eq({ api.calls, b["/b/dune.epub"].collections_sent }, { { "unshelf:1=favorites" }, nil })
+end)
+
+test("engine/collections: starting a TBR book moves it to Currently Reading", function()
+    local b = { ["/b/dune.epub"] = { gid = "1", pushed_shelf = "to-read" } }
+    local api = fakeApi()
+    Engine.run{ api = api, books = b, items = { { file = "/b/dune.epub", now = { pct = 3 }, shelves = { "to-read" } } } }
+    eq(api.calls, { "shelf:1=currently-reading", "progress:1=3" })
 end)
 
 H.done()

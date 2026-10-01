@@ -12,6 +12,13 @@ calendar, a yearly goal and all your highlights, drawn in gentle grays for e-ink
 
 <sub>Screenshots use a made-up demo library: every title, author, cover and quote is invented.</sub>
 
+This repo holds two sister plugins:
+
+| Plugin | What it does |
+|---|---|
+| 🌸 **Blossom** (`blossom.koplugin`) | Your reading diary, from KOReader's statistics |
+| 🌼 **Blossom Reads** (`blossomreads.koplugin`) | Goodreads sync (progress, shelves, collections, ratings, challenge), in the same style. [Full guide →](docs/blossom-reads.md) |
+
 ---
 
 ## 🌷 What's inside
@@ -190,67 +197,34 @@ with Goodreads, and every screen floats over your book in Blossom's soft style.
   <img src="docs/screenshots/r3-shelf.png" width="260" alt="A shelf">
 </p>
 
-- **This book:** see its Goodreads match, pick a shelf, rate it with hearts, or choose another match.
-- **Challenge:** your Goodreads reading challenge, with the pace wave. When Blossom is installed,
-  you also see the number of books Blossom counted.
-- **Shelves and search:** browse your shelves and find books to add, with covers.
+- **Syncs like iCloud Sync:**
+  - quietly, when Wi-Fi connects, on wake and when you close a book, or whenever you tap
+    *Sync now*
+  - Goodreads hiccups are retried up to 3 times
+  - books that still fail are tried again at the next sync
+- **Progress and status:** progress only ever goes up. Starting a book moves it to *Currently
+  Reading*; finishing it moves it to *Read*.
+- **Collections become shelves:** *To Be Read* → Want to Read, *favorites* → a favorites shelf,
+  any other collection → a shelf of the same name. Your real reading status always wins.
+  Custom shelves are kept matched (removed when the book leaves the collection).
+- **Every book gets linked:** by ISBN, its details, or a `Title - Author.epub` file name, a few
+  per sync.
+- **This book, shelves, search and your reading challenge,** as floating Blossom pages. With
+  Blossom installed, the yearly goal stays the same in both.
 
-### How syncing works
+**Install:**
+1. Copy `blossomreads.koplugin` into KOReader's `plugins` folder.
+2. Restart KOReader.
+3. Sign in from **Tools → ❀ Blossom Reads**.
 
-It syncs like the iCloud Sync plugin: quietly, and only when it makes sense.
+If you used Goodreads KO Sync, turn it off.
 
-| When | What happens |
-|------|--------------|
-| Wi-Fi connects | Books whose progress changed since the last sync are sent |
-| Waking up (already online) | The same; it never turns Wi-Fi on by itself |
-| Closing a book (online) | That book is sent straight away |
-| **Sync now** | Everything linked, and Wi-Fi is turned on if needed |
-
-- Automatic syncs happen at most every 5 minutes, and never two at once.
-- Automatic syncs show a small card only when something changed.
-- **Progress** goes up only: re-reading never moves Goodreads backwards.
-- **Shelves:** a started book goes to *Currently Reading*, and a book you mark as finished in
-  KOReader goes to *Read*. A shelf you pick by hand isn't overridden, except by finishing.
-- **Retries:** if a book can't sync (no Wi-Fi, Goodreads busy), it's tried again next time.
-- **Linking:** a new book is linked by its ISBN or ASIN, or by an exact title and author match.
-  Otherwise **This book → Find on Goodreads** lets you pick the right one.
-- **Yearly goal:** your goal in Blossom and on Goodreads stay equal. Change it in either place and
-  the other follows; if both changed, Goodreads wins. Goals over 365 show as 365 in Blossom.
-
-### Settings (Tools → ❀ Blossom Reads)
-
-- **Sync now** and **Last sync** (tap it to see why a sync failed).
-- **Open Blossom Reads** and **This book**.
-- **When to sync:**
-  - Sync when Wi-Fi connects
-  - Sync on wake
-  - Sync when closing a book
-- **Link books automatically.**
-- **Mark Read at 99%** (off by default: only finishing in KOReader marks a book Read).
-- **Share my yearly goal with Blossom** (shown when Blossom is installed).
-- **Sign in / Signed in as …**, and **Remember password**.
-
-Gestures: **Blossom Reads: sync now**, **Blossom Reads: open** and **Blossom Reads: this book**.
-
-### Install
-
-Copy `blossomreads.koplugin` (with its `icons` folder) into KOReader's `plugins` folder, restart,
-and sign in from **Tools → ❀ Blossom Reads**. If a verification code or a picture puzzle is asked
-for, Blossom Reads shows it.
-
-If you used **Goodreads KO Sync** (`goodreadskosync.koplugin`), turn it off, or both will sync the
-same books.
-
-### What it saves
-
-- **Settings:** under `blossomreads` in KOReader's settings.
-- **Sign-in and links:** in `settings/blossomreads/`:
-  - `session.lua`: the Goodreads sign-in, encrypted
-  - `books.lua`: which file is which Goodreads book, and what was last sent
-  - `credentials.lua`: only with *Remember password*, encrypted
-  - a few cached covers
-- **Encryption:** uses KOReader's own libcrypto. It keeps secrets out of plain sight in shared
-  settings, but it isn't protection against someone with full access to the device.
+📖 **[Read the full Blossom Reads guide](docs/blossom-reads.md):**
+- every setting
+- how matching works
+- collections in detail
+- messages and troubleshooting
+- what's stored, and privacy
 
 ---
 
@@ -270,6 +244,12 @@ Blossom Reads has its own suites:
 
 ```bash
 for t in core plan engine load; do luajit tests/test_blossomreads_$t.lua; done
+```
+
+And so does Zero Clicker:
+
+```bash
+for t in core load; do luajit tests/test_zeroclicker_$t.lua; done
 ```
 
 `test_plugin_load.lua` builds every page against stand-ins for KOReader's modules. To see the
@@ -301,3 +281,5 @@ tools/screenshots.sh ~/Applications/KOReader.app
 | `blossomreads_store.lua` / `_secret.lua` / `_covers.lua` | Files, encryption, cover cache |
 | `blossomreads_view.lua` / `_book.lua` / `_list.lua` / `_theme.lua` | The floating Blossom pages |
 | `tools/screenshots_reads.sh` | Blossom Reads screenshots with made-up Goodreads data |
+| `zeroclicker.koplugin/main.lua` | Zero Clicker: claims the controller, takes its events, button learning, menu |
+| `zeroclicker_core.lua` | Pure press detection (keys and D-pad axes), default buttons, name matching |

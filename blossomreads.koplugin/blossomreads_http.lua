@@ -259,10 +259,45 @@ function Http.classify(status, headers, url)
     return nil
 end
 
+-- Goodreads often has a passing hiccup (its "over capacity" 503, a 429, a
+-- dropped connection). Those are retried; a real answer (4xx, sign-in, a
+-- firewall page) is not.
+Http.RETRIES = 2
+Http.sleep = function(seconds)
+    local ok, socket = pcall(require, "socket")
+    if ok and socket and socket.sleep then socket.sleep(seconds) end
+end
+
+local function transient(resp)
+    if resp.err == Http.ERR.NETWORK then return true end
+    local s = resp.status
+    return resp.err == Http.ERR.SERVER and s and (s >= 500 or s == 429)
+end
+
+-- Failed requests go to KOReader's log (path and status only: no cookies, no page text).
+local function logFailure(method, url, resp, tries)
+    local ok, logger = pcall(require, "logger")
+    if not (ok and logger) then return end
+    logger.warn("BlossomReads http:", method, ((url or ""):gsub("^https?://[^/]+", ""):gsub("%?.*", "")),
+        "status", tostring(resp.status), "err", tostring(resp.err), "tries", tries)
+end
+
 -- opts: body (string or table), headers, csrf (token string), xhr (bool),
 -- signin_ok (sign-in pages are the expected answer, used by the login flow).
 -- Returns { status, body, headers, url, err }.
 function Http:request(method, url, opts)
+    local resp
+    for try = 1, Http.RETRIES + 1 do
+        resp = self:_once(method, url, opts)
+        resp.tries = try
+        if not transient(resp) then break end
+        if try <= Http.RETRIES then Http.sleep(try) end
+    end
+    if resp.err then logFailure(method, url, resp, resp.tries) end
+    return resp
+end
+
+function Http:_once(method, url, opts)
     opts = opts or {}
     local body = opts.body
     if type(body) == "table" then body = Http.form(body) end

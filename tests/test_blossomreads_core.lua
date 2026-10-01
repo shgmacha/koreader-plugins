@@ -108,13 +108,14 @@ else
 end
 
 local Http = require("blossomreads_http")
+Http.sleep = function() end -- no real pauses between retries in tests
 
 -- Scripted transport: routes[url] = { status, headers, body } (or a list, consumed in order).
 local function fakeTransport(routes, log)
     return function(req)
         if log then log[#log + 1] = req end
         local r = routes[req.url]
-        if type(r) == "table" and r[1] and type(r[1]) == "table" then r = table.remove(r, 1) end
+        if type(r) == "table" and (type(r[1]) == "table" or r[1] == "down") then r = table.remove(r, 1) end
         if not r then return 404, {}, "" end
         if r == "down" then return nil end
         return r[1], r[2] or {}, r[3] or ""
@@ -193,7 +194,7 @@ local SIGNIN_LANDING = page([[<a href="https://www.goodreads.com/ap/signin?openi
 local AP_FORM = page([[<form name="signIn" method="post" action="https://www.amazon.com/ap/signin">
 <input type="hidden" name="appActionToken" value="tok&amp;1"><input type="email" name="email">
 <input type="password" name="password"><input type="checkbox" name="rememberMe" value="true"></form>]])
-local REVIEW_LIST = page([[<a href="/user/show/42-hillary">me</a>]])
+local REVIEW_LIST = page([[<a href="/user/show/42-reader">me</a>]])
 local function routes(extra)
     local r = {
         [GR .. "/user/sign_in"] = { 200, {}, SIGNIN_LANDING },
@@ -423,8 +424,8 @@ end)
 
 test("identify: ASIN and file-name fallbacks", function()
     eq(Identify.fromProps({ identifiers = "mobi-asin:B00B7NPRY8" }).asin, "B00B7NPRY8")
-    local id = Identify.fromProps({ title = "" }, "/b/Herbert - Dune [9780441172719].epub")
-    eq({ id.isbn, id.title }, { "9780441172719", "Herbert - Dune [9780441172719]" })
+    local id = Identify.fromProps({ title = "" }, "/b/Dune - Frank Herbert [9780441172719].epub")
+    eq({ id.isbn, id.title, id.author }, { "9780441172719", "Dune", "Frank Herbert" })
 end)
 
 test("identify: identifier search links the first hit", function()
@@ -487,6 +488,59 @@ test("covers: prune keeps only the newest MAX", function()
     Covers.MAX = max
     eq({ exists(Covers.dir() .. "/1.jpg"), exists(Covers.dir() .. "/2.jpg"), exists(Covers.dir() .. "/5.jpg") }, { false, false, true })
     Store.setDir(nil)
+end)
+
+test("http: Goodreads hiccups (503, 429, dropped connection) are retried", function()
+    local log = {}
+    local c = Http.new{ transport = fakeTransport({ ["https://x/a"] = { { 503, {}, "over capacity" }, { 429, {}, "" }, { 200, {}, "ok" } },
+        ["https://x/b"] = { "down", { 200, {}, "ok" } } }, log) }
+    local r = c:get("https://x/a")
+    eq({ r.status, r.err, r.tries, #log }, { 200, nil, 3, 3 })
+    r = c:get("https://x/b")
+    eq({ r.status, r.tries }, { 200, 2 })
+end)
+
+test("http: retries stop after 3 tries; real answers (404, 403, sign-in) aren't retried", function()
+    local log = {}
+    local c = Http.new{ transport = fakeTransport({ ["https://x/a"] = { 500, {}, "" }, ["https://x/nf"] = { 404, {}, "" },
+        ["https://x/fw"] = { 403, {}, "" } }, log) }
+    eq({ c:get("https://x/a").err, #log }, { "server", 3 })
+    eq({ c:get("https://x/nf").err, #log }, { "not_found", 4 })
+    eq({ c:get("https://x/fw").err, #log }, { "blocked", 5 })
+end)
+
+test("http: failures are logged with path and status only", function()
+    local logged
+    package.loaded["logger"] = { warn = function(...) logged = table.concat({ ... }, " ") end }
+    Http.new{ transport = fakeTransport({ ["https://www.goodreads.com/review/list?shelf=read"] = { 500, {}, "" } }) }
+        :get("https://www.goodreads.com/review/list?shelf=read")
+    package.loaded["logger"] = nil
+    eq(logged, "BlossomReads http: GET /review/list status 500 err server tries 3")
+end)
+
+test("identify: title and author from the Kindle's file names", function()
+    eq({ Identify.fromFileName("/mnt/us/Books/Juniper Hale/(2) Moonlit Orchard - Juniper Hale.epub") }, { "Moonlit Orchard", "Juniper Hale" })
+    eq({ Identify.fromFileName("/mnt/us/Books/Paper Lanterns - Ada Penrose.epub") }, { "Paper Lanterns", "Ada Penrose" })
+    eq({ Identify.fromFileName("/mnt/us/Books/Lantern Saga/The Keeper's Lantern.epub") }, { "The Keeper's Lantern" })
+    eq({ Identify.fromFileName("/b/A Garden of Small Hours - Mina J. Hart (1).epub") }, { "A Garden of Small Hours", "Mina J. Hart" })
+    eq({ Identify.fromFileName("/b/Spider-Man - Stan Lee.epub") }, { "Spider-Man", "Stan Lee" })
+    eq({ Identify.fromFileName("/b/Nausea - Jean-Paul Sartre.epub") }, { "Nausea", "Jean-Paul Sartre" })
+end)
+
+test("identify: a never-opened book is described by its file name", function()
+    eq(Identify.fromProps(nil, "/b/(3) Starlit Harbor - Juniper Hale.epub"), { title = "Starlit Harbor", author = "Juniper Hale" })
+    -- real metadata wins over the file name
+    eq(Identify.fromProps({ title = "Starlit Harbor", authors = "Juniper Hale\nX" }, "/b/whatever.epub"), { title = "Starlit Harbor", author = "Juniper Hale" })
+end)
+
+test("api: taking a book off a shelf posts a=remove", function()
+    local log = {}
+    local a = api({ [GR .. "/shelf/add_to_shelf"] = { 200, {}, "{}" } }, log)
+    eq({ a:unshelf("9", "favorites") }, { true })
+    local body = log[#log].body
+    assert(body:find("a=remove") and body:find("name=favorites") and body:find("book_id=9"), body)
+    a:setShelf("9", "favorites")
+    assert(log[#log].body:find("a=&"), log[#log].body)
 end)
 
 H.done()

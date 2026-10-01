@@ -99,4 +99,61 @@ test("goal: a Goodreads goal over 365 is capped in Blossom and doesn't bounce ba
     eq(Plan.decideGoal(365, 400, 400), { action = "adopt", synced = 400 })
 end)
 
+-- Collections (KOReader collections → Goodreads shelves)
+local function c(...) return { collection_shelves = { ... } } end
+
+test("collections: names map to shelves; anything else is its own shelf; overrides", function()
+    eq(Plan.collectionShelf("To Be Read"), "to-read")
+    eq(Plan.collectionShelf("TBR"), "to-read")
+    eq(Plan.collectionShelf("Want to read!"), "to-read")
+    eq(Plan.collectionShelf("Currently Reading"), "currently-reading")
+    eq(Plan.collectionShelf("DNF"), "did-not-finish")
+    eq(Plan.collectionShelf("Finished"), "read")
+    eq(Plan.collectionShelf("favorites"), "favorites")
+    eq(Plan.collectionShelf("Cozy Autumn ♡"), "cozy-autumn")
+    eq(Plan.collectionShelf("favorites", "off"), nil)
+    eq(Plan.collectionShelf("Stuff", "to-read"), "to-read")
+    eq(Plan.collectionShelf("Stuff", "auto"), "stuff")
+end)
+
+test("collections: unstarted TBR book → Want to Read", function()
+    eq(plan({}, {}, c("to-read")), { { type = "shelf", shelf = "to-read" } })
+    eq(plan({ pct = 0 }, { pushed_shelf = "to-read" }, c("to-read")), {})
+end)
+
+test("collections: reading status always wins over TBR", function()
+    eq(plan({ pct = 5 }, { pushed_shelf = "to-read" }, c("to-read")),
+        { { type = "shelf", shelf = "currently-reading" }, { type = "progress", pct = 5 } })
+    eq(plan({ pct = 100, status = "complete" }, { pushed_shelf = "currently-reading" }, c("to-read")),
+        { { type = "shelf", shelf = "read" } })
+    eq(plan({}, { pushed_shelf = "currently-reading" }, c("to-read")), {}) -- started earlier, 0% now: keep
+end)
+
+test("collections: a shelf picked by hand isn't overridden by a collection", function()
+    eq(plan({}, { pinned_shelf = "did-not-finish", pushed_shelf = "did-not-finish" }, c("to-read")), {})
+end)
+
+test("collections: two status collections → the stronger one (DNF over TBR)", function()
+    eq(plan({}, {}, c("to-read", "did-not-finish")), { { type = "shelf", shelf = "did-not-finish" } })
+    -- moved from TBR to DNF later, still unstarted
+    eq(plan({}, { pushed_shelf = "to-read" }, c("did-not-finish")), { { type = "shelf", shelf = "did-not-finish" } })
+end)
+
+test("collections: custom shelves are added once, alongside the status", function()
+    eq(plan({ pct = 30 }, { pushed_shelf = "currently-reading", pushed_pct = 30 }, c("favorites")),
+        { { type = "shelf", shelf = "favorites", custom = true } })
+    eq(plan({ pct = 30 }, { pushed_shelf = "currently-reading", pushed_pct = 30, collections_sent = { "favorites" } }, c("favorites")), {})
+end)
+
+test("collections: leaving a collection removes its custom shelf (only ones we added)", function()
+    eq(plan({}, { collections_sent = { "favorites", "cozy" } }, c("cozy")), { { type = "unshelf", shelf = "favorites" } })
+    -- status shelves are never removed
+    eq(plan({}, { pushed_shelf = "to-read" }, c()), {})
+end)
+
+test("collections: custom shelves still sync for finished and abandoned books", function()
+    eq(plan({ status = "complete" }, { pushed_shelf = "read" }, c("favorites")), { { type = "shelf", shelf = "favorites", custom = true } })
+    eq(plan({ pct = 40, status = "abandoned" }, {}, c("favorites")), { { type = "shelf", shelf = "favorites", custom = true } })
+end)
+
 H.done()

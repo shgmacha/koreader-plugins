@@ -153,13 +153,23 @@ function Api:shelfBooks(slug, page)
     return books, body:find('rel="next"', 1, true) ~= nil
 end
 
-function Api:setShelf(gid, slug)
+local function shelfPost(self, gid, slug, action)
     local token, err = self:csrf()
     if not token then return nil, err end
     local r = self.http:post(BASE .. "/shelf/add_to_shelf",
-        { book_id = tostring(gid), name = slug, a = "", authenticity_token = token }, writeOpts(token))
+        { book_id = tostring(gid), name = slug, a = action, authenticity_token = token }, writeOpts(token))
     if r.err then return nil, r.err end
     return true
+end
+
+-- Put a book on a shelf (Goodreads creates a custom shelf the first time it's used).
+function Api:setShelf(gid, slug)
+    return shelfPost(self, gid, slug, "")
+end
+
+-- Take a book off a custom shelf.
+function Api:unshelf(gid, slug)
+    return shelfPost(self, gid, slug, "remove")
 end
 
 -- Reading progress as a whole percent (1–100).

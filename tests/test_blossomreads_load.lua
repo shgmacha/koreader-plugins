@@ -53,7 +53,11 @@ end
 local shown, closed, scheduled = {}, {}, {}
 local dispatched = {}
 local online = true
-local sidecars = {} -- file -> { percent_finished, summary, mtime }
+local sidecars = {} -- file -> { percent_finished, summary, mtime, doc_props }
+local on_disk = {}   -- files that exist
+local collections = { coll = {} } -- stands in for KOReader's ReadCollection
+function collections:_read() end
+local history = { hist = {} }
 
 local stubs = {
     ["ffi/blitbuffer"] = { COLOR_WHITE = 0xFF, COLOR_BLACK = 0, Color8 = function(v) return v end },
@@ -91,8 +95,11 @@ local stubs = {
         local args = { ... }
         return (s:gsub("%%(%d)", function(i) return tostring(args[tonumber(i)]) end))
     end },
+    ["readcollection"] = collections,
+    ["readhistory"] = history,
     ["libs/libkoreader-lfs"] = { attributes = function(p, what)
         if p:find("blossom%.koplugin$") then return _G.BLOSSOM_INSTALLED and "directory" or nil end
+        if what == "mode" and on_disk[p] then return "file" end
         local sc = sidecars[p:match("^(.-)%.sdr$") or ""]
         if sc and what == "modification" then return sc.mtime or 0 end
         return nil
@@ -201,6 +208,9 @@ local function reset()
     G_reader_settings.data = {}
     online = true
     sidecars = {}
+    on_disk = {}
+    collections.coll = {}
+    history.hist = {}
     _G.BLOSSOM_INSTALLED = false
     resetNet()
     Login.signOut()
@@ -360,8 +370,8 @@ test("menu: iCloud-style items, status line and toggles", function()
         texts[#texts + 1] = it.text or it.text_func()
     end
     eq(texts, { "Sync now", "Last sync: never", "Open Blossom Reads", "This book", "Sync when Wi-Fi connects",
-        "Sync on wake", "Sync when closing a book", "Link books automatically", "Mark Read at 99%",
-        "Sign in to Goodreads", "Remember password" })
+        "Sync on wake", "Sync when closing a book", "Link books automatically", "Sync collections to shelves",
+        "Collections → shelves", "Mark Read at 99%", "Sign in to Goodreads", "Remember password" })
     eq(items.blossomreads.sorting_hint, "tools")
     local wifi = items.blossomreads.sub_item_table[5]
     eq(wifi.checked_func(), true)
@@ -378,10 +388,10 @@ test("menu: Blossom installed adds the goal toggle (12 items); status after a sy
     local items = {}
     p:addToMainMenu(items)
     local list = items.blossomreads.sub_item_table
-    eq(#list, 12)
-    eq(list[10].text, "Share my yearly goal with Blossom")
+    eq(#list, 14)
+    eq(list[12].text, "Share my yearly goal with Blossom")
     assert(list[2].text_func():find("^Last sync: %d%d:%d%d — goal set to 24 ♥$"), list[2].text_func())
-    eq(list[11].text_func(), "Signed in as 42")
+    eq(list[13].text_func(), "Signed in as 42")
 end)
 
 test("sign-in: dialog → signed in, password remembered, menu refreshed", function()
@@ -708,6 +718,171 @@ test("gestures: Dispatcher events open screens and sync", function()
     eq({ shown[n + 1].title, shown[n + 2].title }, { "My Goodreads", "This book" })
     p:onBlossomReadsSync()
     eq(lastCard(), "Up to date ❀")
+end)
+
+-- Collections → shelves (made-up books)
+local A = "/mnt/us/Books/Juniper Hale/(2) Moonlit Orchard - Juniper Hale.epub"
+local B = "/mnt/us/Books/Paper Lanterns - Ada Penrose.epub"
+local C = "/mnt/us/Books/Seaglass Summer - Nora Pike.epub"
+local function libraryFixture()
+    on_disk[A], on_disk[B], on_disk[C] = true, true, true
+    collections.coll = { ["To Be Read"] = { [A] = {}, [B] = {} }, ["favorites"] = { [B] = {} } }
+    history.hist = { { file = C } }
+    sidecars[C] = { percent_finished = 0.4, mtime = 5, doc_props = { title = "Seaglass Summer", authors = "Nora Pike" } }
+    local function hit(id, title, author)
+        return { 200, {}, string.format('[{"bookId":%d,"bookTitleBare":"%s","author":{"name":"%s"}}]', id, title, author) }
+    end
+    net.routes[GR .. "/book/auto_complete?format=json&q=Moonlit%20Orchard%20Juniper%20Hale"] = hit(101, "Moonlit Orchard", "Juniper Hale")
+    net.routes[GR .. "/book/auto_complete?format=json&q=Paper%20Lanterns%20Ada%20Penrose"] = hit(102, "Paper Lanterns", "Ada Penrose")
+    net.routes[GR .. "/book/auto_complete?format=json&q=Seaglass%20Summer%20Nora%20Pike"] = hit(103, "Seaglass Summer", "Nora Pike")
+end
+local function posts()
+    local out = {}
+    for _, l in ipairs(net.log) do if l:find("^POST") then out[#out + 1] = l end end
+    return out
+end
+
+test("collections: Sync now links unlinked books and mirrors collections onto shelves", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin()
+    local s = p:runSync{}
+    eq(s.linked, 3)
+    local b = Store.open("books").data
+    eq({ b[A].gid, b[B].gid, b[C].gid }, { "101", "102", "103" })
+    eq({ b[A].pushed_shelf, b[B].pushed_shelf, b[B].collections_sent, b[C].pushed_shelf, b[C].pushed_pct },
+        { "to-read", "to-read", { "favorites" }, "currently-reading", 40 })
+    eq(#posts(), 5) -- A to-read, B to-read + favorites, C currently-reading + 40%
+    eq(lastCard(), "Goodreads ♡ 3 books updated · 3 books linked")
+end)
+
+test("collections: a second sync sends nothing", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin()
+    p:runSync{}
+    net.log = {}
+    p:runSync{}
+    eq(posts(), {})
+    eq(lastCard(), "Up to date ❀")
+end)
+
+test("collections: leaving favorites takes the book off the Goodreads shelf", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin()
+    p:runSync{}
+    collections.coll.favorites = {}
+    net.log = {}
+    local bodies = {}
+    local orig = p.transport
+    p.transport = function(req) if req.method == "POST" then bodies[#bodies + 1] = req.body end return orig(req) end
+    p:runSync{}
+    eq(#bodies, 1)
+    assert(bodies[1]:find("a=remove") and bodies[1]:find("name=favorites") and bodies[1]:find("book_id=102"), bodies[1])
+    eq(Store.open("books"):get(B).collections_sent, nil)
+end)
+
+test("collections: starting a TBR book moves it to Currently Reading", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin()
+    p:runSync{}
+    sidecars[A] = { percent_finished = 0.05, mtime = 9 }
+    net.log = {}
+    p:runSync{}
+    eq(#posts(), 2)
+    eq(Store.open("books"):get(A).pushed_shelf, "currently-reading")
+end)
+
+test("collections: a book with no match isn't searched again for a week", function()
+    reset()
+    signIn()
+    local X = "/mnt/us/Books/Unknown Thing.epub"
+    on_disk[X] = true
+    collections.coll = { ["To Be Read"] = { [X] = {} } }
+    net.routes[GR .. "/book/auto_complete?format=json&q=Unknown%20Thing"] = { 200, {}, "[]" }
+    local p = newPlugin()
+    p:runSync{}
+    assert(Store.open("books"):get(X).unmatched_at)
+    net.log = {}
+    p:runSync{}
+    eq(net.log, {}) -- no search, and nothing else to send
+end)
+
+test("collections: at most 8 books are linked per sync", function()
+    reset()
+    signIn()
+    local coll = {}
+    for i = 1, 11 do
+        local f = string.format("/mnt/us/Books/Book %02d - Some Author.epub", i)
+        on_disk[f], coll[f] = true, {}
+        net.routes[GR .. string.format("/book/auto_complete?format=json&q=Book%%20%02d%%20Some%%20Author", i)] = { 200, {},
+            string.format('[{"bookId":%d,"bookTitleBare":"Book %02d","author":{"name":"Some Author"}}]', 200 + i, i) }
+    end
+    collections.coll = { ["To Be Read"] = coll }
+    local p = newPlugin()
+    eq(p:runSync{}.linked, 8)
+    eq(p:runSync{}.linked, 3)
+end)
+
+test("collections: 'Don't sync' and the master toggle are respected", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin()
+    p:setCollectionMap("favorites", "off")
+    p:runSync{}
+    eq(Store.open("books"):get(B).collections_sent, nil)
+    reset()
+    signIn()
+    libraryFixture()
+    p = newPlugin()
+    p:setSetting("sync_collections", false)
+    local s = p:runSync{}
+    eq(s.linked, 1) -- only the history book; collections ignored
+    eq(Store.open("books"):get(A), nil)
+end)
+
+test("collections: closing a book doesn't run linking (stays quick)", function()
+    reset()
+    signIn()
+    libraryFixture()
+    local p = newPlugin{ file = C, pct = 0.5 }
+    p:linkBook(C, { gid = "103" })
+    p:onCloseDocument()
+    runScheduled()
+    for _, l in ipairs(net.log) do assert(not l:find("auto_complete"), l) end
+end)
+
+test("menu: Collections → shelves lists each collection and its shelf; choices change it", function()
+    reset()
+    collections.coll = { ["To Be Read"] = {}, ["favorites"] = {}, ["Cozy Autumn"] = {} }
+    local p = newPlugin()
+    local items = {}
+    p:addToMainMenu(items)
+    local entry
+    for _, it in ipairs(items.blossomreads.sub_item_table) do
+        if it.text == "Collections → shelves" then entry = it end
+    end
+    local sub = entry.sub_item_table_func()
+    local lines = {}
+    for _, it in ipairs(sub) do lines[#lines + 1] = it.text_func() end
+    eq(lines, { "Cozy Autumn → cozy autumn", "To Be Read → Want to Read", "favorites → favorites" })
+    local choices = sub[3].sub_item_table_func()
+    eq(choices[1].checked_func(), true) -- Automatic
+    choices[6].callback() -- Don't sync
+    eq(sub[3].text_func(), "favorites → not synced")
+    choices[7].callback() -- Another shelf…
+    local ask = lastShown("InputDialog")
+    ask.answer = "Comfort Reads"
+    ask.buttons[1][2].callback()
+    eq(sub[3].text_func(), "favorites → comfort reads")
+    eq(Login.pending(), false)
 end)
 
 H.done()

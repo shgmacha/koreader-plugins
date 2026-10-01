@@ -19,6 +19,7 @@ local Api = require("blossomreads_api")
 local Engine = require("blossomreads_engine")
 local Identify = require("blossomreads_identify")
 local Login = require("blossomreads_login")
+local Plan = require("blossomreads_plan")
 local Store = require("blossomreads_store")
 
 local SETTINGS_KEY = "blossomreads"
@@ -30,7 +31,10 @@ local DEFAULTS = {
     complete_at_99 = false,
     share_goal = true,
     remember_password = true,
+    sync_collections = true,
 }
+local LINK_PER_RUN = 8
+local RETRY_UNMATCHED = 7 * 24 * 3600
 local AUTO_THROTTLE = 5 * 60
 
 -- Shared by the file-manager and reader instances of the plugin.
@@ -153,15 +157,108 @@ local function sidecarTime(file)
     return path and lfs.attributes(path, "modification") or 0
 end
 
+--------------------------------------------------------------------------------
+-- Collections and linking
+--------------------------------------------------------------------------------
+
+-- { [file] = { "To Be Read", "favorites" } } from KOReader's collections.
+function BlossomReads.collectionsOf()
+    local out = {}
+    local ok, ReadCollection = pcall(require, "readcollection")
+    if not (ok and ReadCollection) then return out end
+    pcall(ReadCollection._read, ReadCollection)
+    for name, items in pairs(ReadCollection.coll or {}) do
+        for file in pairs(items) do
+            out[file] = out[file] or {}
+            table.insert(out[file], name)
+        end
+    end
+    for _i, names in pairs(out) do table.sort(names) end
+    return out
+end
+
+-- The Goodreads shelves for a book's collections (per the Collections → shelves settings).
+function BlossomReads:shelvesFor(names)
+    if not (names and self:getSetting("sync_collections")) then return nil end
+    local map, out, seen = self:getSetting("collection_map") or {}, {}, {}
+    for _i, name in ipairs(names) do
+        local slug = Plan.collectionShelf(name, map[name])
+        if slug and not seen[slug] then
+            seen[slug] = true
+            out[#out + 1] = slug
+        end
+    end
+    return out
+end
+
+-- What KOReader knows about a book without opening it: its .sdr, then Cover Browser's cache
+-- (nil means the file name is used).
+local function metadataFor(file)
+    local DocSettings = require("docsettings")
+    if DocSettings:hasSidecarFile(file) then
+        local props = DocSettings:open(file):readSetting("doc_props")
+        if type(props) == "table" and (props.title or "") ~= "" then return props end
+    end
+    local bim = package.loaded["bookinfomanager"]
+    if bim and bim.getBookInfo then
+        local ok, info = pcall(bim.getBookInfo, bim, file)
+        if ok and type(info) == "table" and (info.title or "") ~= "" then return info end
+    end
+end
+
+-- Link books from collections and reading history that aren't linked yet (a few per sync).
+-- Returns how many were linked, and a stop error if Goodreads can't be reached.
+function BlossomReads:linkPending(api, books, collections, now)
+    local files, seen = {}, {}
+    local function add(file)
+        if file and not seen[file] then
+            seen[file] = true
+            files[#files + 1] = file
+        end
+    end
+    local in_coll = {}
+    for file in pairs(collections or {}) do in_coll[#in_coll + 1] = file end
+    table.sort(in_coll)
+    for _i, file in ipairs(in_coll) do add(file) end
+    local ok, ReadHistory = pcall(require, "readhistory")
+    for _i, item in ipairs(ok and ReadHistory and ReadHistory.hist or {}) do add(item.file) end
+
+    local linked, tried = 0, 0
+    for _i, file in ipairs(files) do
+        if tried >= LINK_PER_RUN then break end
+        local entry = books[file] or {}
+        local recent_miss = entry.unmatched_at and now - entry.unmatched_at < RETRY_UNMATCHED
+        if not entry.gid and not recent_miss and lfs.attributes(file, "mode") == "file" then
+            tried = tried + 1
+            local want = Identify.fromProps(metadataFor(file), file)
+            local match, how, _ranked, err = Identify.match(function(q) return api:search(q) end, want)
+            if err == "signin" or err == "network" or err == "blocked" then return linked, err end
+            if match then
+                books[file] = { gid = match.gid, title = match.title, author = match.author, cover = match.cover, linked = how }
+                linked = linked + 1
+            elseif not err then
+                entry.unmatched_at = now
+                books[file] = entry
+            end
+        end
+    end
+    return linked
+end
+
 -- opts.only: one file; opts.since: skip books whose .sdr hasn't changed; opts.live: { [file] = progress }
-function BlossomReads:collect(books, opts)
+-- Books in a collection (or that were) are always planned: their shelves may have changed.
+function BlossomReads:collect(books, opts, collections)
+    collections = collections or {}
     local items, open = {}, self:currentFile()
     for file, entry in pairs(books) do
         if entry.gid and (not opts.only or opts.only == file) then
+            local names = collections[file]
+            local tracked = (names and self:getSetting("sync_collections")) or entry.collections_sent
             local now = opts.live and opts.live[file]
             if not now and file == open then now = self:liveProgress() end
-            if not now and (not opts.since or sidecarTime(file) > opts.since) then now = savedProgress(file) end
-            if now then items[#items + 1] = { file = file, now = now } end
+            if not now and (tracked or not opts.since or sidecarTime(file) > opts.since) then now = savedProgress(file) end
+            if not now and tracked then now = {} end
+            if now then items[#items + 1] = { file = file, now = now, shelves = self:shelvesFor(names) or {} } end
         end
     end
     table.sort(items, function(a, b) return a.file < b.file end)
@@ -279,14 +376,28 @@ function BlossomReads:_sync(o)
     if self:goalLinked() then
         goal = { get = self.blossomGoal, set = self.setBlossomGoal, synced = self:getSetting("goal_synced") }
     end
-    local s = Engine.run{
-        api = api,
-        books = store.data,
-        items = self:collect(store.data, o),
-        opts = { complete_at_99 = self:getSetting("complete_at_99") },
-        goal = goal,
-    }
-    if s.changed then
+    local collections = self.collectionsOf()
+    local linked, link_err = 0, nil
+    if not o.only then
+        local before = Store.serialize(store.data)
+        linked, link_err = self:linkPending(api, store.data, self:getSetting("sync_collections") and collections or {}, os.time())
+        if Store.serialize(store.data) ~= before then store.dirty = true end
+    end
+    local s
+    if link_err then
+        s = { time = os.time(), books = 0, pushed = 0, shelved = 0, failed = 0, error = link_err }
+    else
+        s = Engine.run{
+            api = api,
+            books = store.data,
+            items = self:collect(store.data, o, collections),
+            opts = { complete_at_99 = self:getSetting("complete_at_99") },
+            goal = goal,
+        }
+    end
+    s.linked = linked
+    if linked > 0 then s.changed = true end
+    if s.changed or store.dirty then
         store.dirty = true
         store:flush()
     end
@@ -300,7 +411,7 @@ function BlossomReads:_sync(o)
         self:keepSession(api)
     end
     self:setSetting("last_sync", {
-        time = s.time, books = s.books, failed = s.failed, error = s.error,
+        time = s.time, books = s.books, linked = s.linked, failed = s.failed, error = s.error,
         goal = s.goal and { value = s.goal.value } or nil,
     })
     return s
@@ -320,6 +431,11 @@ function BlossomReads.summaryText(s)
         parts[#parts + 1] = _("1 book updated")
     elseif (s.books or 0) > 1 then
         parts[#parts + 1] = T(_("%1 books updated"), s.books)
+    end
+    if (s.linked or 0) == 1 then
+        parts[#parts + 1] = _("1 book linked")
+    elseif (s.linked or 0) > 1 then
+        parts[#parts + 1] = T(_("%1 books linked"), s.linked)
     end
     if s.goal and s.goal.value then parts[#parts + 1] = T(_("goal set to %1 ♥"), s.goal.value) end
     if (s.failed or 0) > 0 then parts[#parts + 1] = T(_("%1 couldn't sync"), s.failed) end
@@ -503,13 +619,16 @@ function BlossomReads:loginStep(step, email, password, touchmenu)
     end
 end
 
-function BlossomReads:askText(title, on_done)
+function BlossomReads:askText(title, on_done, not_login)
     local InputDialog = require("ui/widget/inputdialog")
     local dialog
     dialog = InputDialog:new{
         title = title,
         buttons = { {
-            { text = _("Cancel"), id = "close", callback = function() UIManager:close(dialog); Login.cancel() end },
+            { text = _("Cancel"), id = "close", callback = function()
+                UIManager:close(dialog)
+                if not not_login then Login.cancel() end
+            end },
             {
                 text = _("Continue"),
                 is_enter_default = true,
@@ -586,6 +705,86 @@ end
 -- Menu (Tools → ❀ Blossom Reads), laid out like iCloud Sync's
 --------------------------------------------------------------------------------
 
+-- Collections → shelves: one line per KOReader collection, each with its own choices.
+local CHOICES = {
+    { "auto", _("Automatic (by name)") },
+    { "to-read", _("Want to Read") },
+    { "currently-reading", _("Currently Reading") },
+    { "read", _("Read") },
+    { "did-not-finish", _("Did Not Finish") },
+    { "off", _("Don't sync") },
+}
+
+function BlossomReads:setCollectionMap(name, value)
+    local map = self:getSetting("collection_map") or {}
+    map[name] = value ~= "auto" and value or nil
+    self:setSetting("collection_map", map)
+end
+
+function BlossomReads:collectionChoices(name)
+    local items = {}
+    local function current()
+        return (self:getSetting("collection_map") or {})[name] or "auto"
+    end
+    for _i, c in ipairs(CHOICES) do
+        items[#items + 1] = {
+            text = c[2],
+            radio = true,
+            checked_func = function() return current() == c[1] end,
+            callback = function() self:setCollectionMap(name, c[1]) end,
+        }
+    end
+    items[#items + 1] = {
+        text_func = function()
+            local v = current()
+            local custom = v ~= "auto" and v ~= "off" and not Plan.isStatus(v)
+            return custom and T(_("Another shelf: %1"), v) or _("Another shelf…")
+        end,
+        checked_func = function()
+            local v = current()
+            return v ~= "auto" and v ~= "off" and not Plan.isStatus(v)
+        end,
+        callback = function(touchmenu)
+            self:askText(_("Goodreads shelf name"), function(text)
+                local slug = Plan.slug(text)
+                if slug ~= "" then self:setCollectionMap(name, slug) end
+                if touchmenu then touchmenu:updateItems() end
+            end, true)
+        end,
+    }
+    return items
+end
+
+function BlossomReads:collectionMenu()
+    local names = {}
+    for name in pairs(self.collectionNames()) do names[#names + 1] = name end
+    table.sort(names)
+    local items = {}
+    for _i, name in ipairs(names) do
+        items[#items + 1] = {
+            text_func = function()
+                local slug = Plan.collectionShelf(name, (self:getSetting("collection_map") or {})[name])
+                local shelf = slug and require("blossomreads_view").shelfName(slug) or _("not synced")
+                return T("%1 → %2", name, shelf)
+            end,
+            sub_item_table_func = function() return self:collectionChoices(name) end,
+        }
+    end
+    if #items == 0 then items[1] = { text = _("No collections yet ♡"), enabled = false } end
+    return items
+end
+
+-- Every collection's name, including empty ones.
+function BlossomReads.collectionNames()
+    local out = {}
+    local ok, ReadCollection = pcall(require, "readcollection")
+    if ok and ReadCollection then
+        pcall(ReadCollection._read, ReadCollection)
+        for name in pairs(ReadCollection.coll or {}) do out[name] = true end
+    end
+    return out
+end
+
 local function toggle(self, key, text)
     return {
         text = text,
@@ -617,6 +816,12 @@ function BlossomReads:addToMainMenu(menu_items)
         toggle(self, "auto_on_resume", _("Sync on wake")),
         toggle(self, "auto_on_close", _("Sync when closing a book")),
         toggle(self, "auto_link", _("Link books automatically")),
+        toggle(self, "sync_collections", _("Sync collections to shelves")),
+        {
+            text = _("Collections → shelves"),
+            enabled_func = function() return self:getSetting("sync_collections") end,
+            sub_item_table_func = function() return self:collectionMenu() end,
+        },
         toggle(self, "complete_at_99", _("Mark Read at 99%")),
     }
     items[#items].separator = not self:blossomInstalled()

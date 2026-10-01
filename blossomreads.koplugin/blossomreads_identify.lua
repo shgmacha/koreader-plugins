@@ -56,16 +56,31 @@ local function findAsin(text)
     return (text or ""):upper():match("%f[%w](B0[%u%d][%u%d][%u%d][%u%d][%u%d][%u%d][%u%d][%u%d])%f[%W]")
 end
 
--- props: KOReader doc_props ({ title, authors = "A\nB", identifiers = "isbn:…\n…" }).
+-- "(2) Moonlit Orchard - Juniper Hale.epub" -> "Moonlit Orchard", "Juniper Hale" (Title - Author).
+-- A leading "(n)" series number and [bracketed] / (parenthesised) extras are dropped.
+function Identify.fromFileName(file)
+    local name = ((file or ""):match("([^/]+)$") or ""):gsub("%.%w+$", "")
+    name = name:gsub("^%(%d+%)%s*", ""):gsub("%s*%b[]", ""):gsub("%s*%b()%s*$", "")
+    local title, author = name:match("^(.*)%s+%-%s+(.-)%s*$") -- the last " - " separates the author
+    if title and title ~= "" and author ~= "" then return title, author end
+    return name, nil
+end
+
+-- props: KOReader doc_props ({ title, authors = "A\nB", identifiers = "isbn:…\n…" }),
+-- or nil for a book never opened (then the file name is used).
 function Identify.fromProps(props, file)
     props = props or {}
     local name = (file or ""):match("([^/]+)$") or ""
-    local authors = props.authors or ""
+    local file_title, file_author = Identify.fromFileName(file)
+    local title = props.title
+    if not title or title == "" then title = file_title end
+    local author = (props.authors or ""):match("^([^\n]+)")
+    if not author or author == "" then author = file_author end
     return {
         isbn = findIsbn(props.identifiers) or findIsbn(name),
         asin = findAsin(props.identifiers) or findAsin(name),
-        title = props.title ~= "" and props.title or name:gsub("%.%w+$", ""),
-        author = authors:match("^([^\n]+)"),
+        title = title,
+        author = author,
     }
 end
 
