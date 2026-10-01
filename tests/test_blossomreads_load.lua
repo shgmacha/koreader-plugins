@@ -717,7 +717,7 @@ test("gestures: Dispatcher events open screens and sync", function()
     p:onBlossomReadsBook()
     eq({ shown[n + 1].title, shown[n + 2].title }, { "My Goodreads", "This book" })
     p:onBlossomReadsSync()
-    eq(lastCard(), "Up to date ❀")
+    eq(lastCard(), "Up to date ♡")
 end)
 
 -- Collections → shelves (made-up books)
@@ -766,7 +766,7 @@ test("collections: a second sync sends nothing", function()
     net.log = {}
     p:runSync{}
     eq(posts(), {})
-    eq(lastCard(), "Up to date ❀")
+    eq(lastCard(), "Up to date ♡")
 end)
 
 test("collections: leaving favorites takes the book off the Goodreads shelf", function()

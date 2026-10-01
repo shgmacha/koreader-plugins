@@ -287,7 +287,7 @@ local function isOnline()
     return ok and NetworkMgr and NetworkMgr:isConnected() and true or false
 end
 
--- A soft Blossom note: script font, no "i" icon (the ♡ / ❀ in the text say enough).
+-- A soft Blossom note: script font, no "i" icon (a ♡ in the text says enough).
 function BlossomReads.note(text, timeout)
     local Theme = require("blossomreads_theme")
     return InfoMessage:new{ text = text, timeout = timeout, show_icon = false, face = Theme.face("script", 19) }
@@ -348,13 +348,13 @@ function BlossomReads:runSync(o)
     o = o or {}
     if running then return end
     if not Login.signedIn() then
-        if not o.auto then self:card(_("Please sign in to Goodreads first ♡\nTools → ❀ Blossom Reads."), 4) end
+        if not o.auto then self:card(_("Please sign in to Goodreads first ♡\nTools → Blossom Reads."), 4) end
         return
     end
     running = true
     local msg
     if not o.auto then
-        msg = self.note(_("Syncing petals… ❀"))
+        msg = self.note(_("Syncing petals…"))
         UIManager:show(msg)
         UIManager:forceRePaint()
     end
@@ -439,7 +439,7 @@ function BlossomReads.summaryText(s)
     end
     if s.goal and s.goal.value then parts[#parts + 1] = T(_("goal set to %1 ♥"), s.goal.value) end
     if (s.failed or 0) > 0 then parts[#parts + 1] = T(_("%1 couldn't sync"), s.failed) end
-    if #parts == 0 then return _("Up to date ❀") end
+    if #parts == 0 then return _("Up to date ♡") end
     return _("Goodreads ♡ ") .. table.concat(parts, " · ")
 end
 
@@ -472,10 +472,10 @@ end
 -- fn(api) -> value, err. Returns value, err.
 function BlossomReads:busy(fn, text)
     if not Login.signedIn() then
-        self:card(_("Please sign in to Goodreads first ♡\nTools → ❀ Blossom Reads."), 4)
+        self:card(_("Please sign in to Goodreads first ♡\nTools → Blossom Reads."), 4)
         return nil, "signin"
     end
-    local msg = self.note(text or _("Gathering petals… ❀"))
+    local msg = self.note(text or _("Gathering petals…"))
     UIManager:show(msg)
     UIManager:forceRePaint()
     local api = self:api()
@@ -589,7 +589,7 @@ local LOGIN_ERRORS = {
 
 -- Run one sign-in step and follow up (code / puzzle / done).
 function BlossomReads:loginStep(step, email, password, touchmenu)
-    local msg = self.note(_("Signing in… ❀"))
+    local msg = self.note(_("Signing in…"))
     UIManager:show(msg)
     UIManager:forceRePaint()
     local ok, res = pcall(step)

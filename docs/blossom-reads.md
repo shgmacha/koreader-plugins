@@ -218,7 +218,7 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 | Message | What it means | What to do |
 |---|---|---|
 | *Goodreads ♡ 2 books updated · 3 books linked* | A sync sent changes | Nothing ♡ |
-| *Up to date ❀* | Nothing needed sending | Nothing |
+| *Up to date ♡* | Nothing needed sending | Nothing |
 | *Couldn't sync — no Wi-Fi ☆* | Goodreads couldn't be reached | Turn Wi-Fi on; it'll catch up |
 | *Goodreads is busy right now, please try again later ☆* | Goodreads' firewall asked for a check | Try later; you stay signed in |
 | *Goodreads didn't answer properly ☆* | Goodreads failed 3 times in a row on something you tapped | Try again in a minute. Details are in the log |
