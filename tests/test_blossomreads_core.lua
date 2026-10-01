@@ -378,10 +378,10 @@ end)
 
 test("api: shelves with counts, custom shelves marked", function()
     eq(api({}):shelves(), {
-        { slug = "read", custom = false, count = 12 },
-        { slug = "currently-reading", custom = false },
-        { slug = "to-read", custom = false, count = 30 },
-        { slug = "cozy-winter", custom = true, count = 3 },
+        { slug = "read", custom = false, count = 12, param = "shelf" },
+        { slug = "currently-reading", custom = false, param = "shelf" },
+        { slug = "to-read", custom = false, count = 30, param = "shelf" },
+        { slug = "cozy-winter", custom = true, count = 3, param = "shelf" },
     })
 end)
 
@@ -662,6 +662,21 @@ end)
 test("review: dates", function()
     eq(Review.date("2026-09-02"), { year = 2026, month = 9, day = 2 })
     eq(Review.date("someday"), nil)
+end)
+
+test("api: custom status shelves are listed with shelf=, tags with tag=", function()
+    local log = {}
+    local a = api({ [GR .. "/review/list"] = { 200, {}, [[<meta name="csrf-token" content="T" />
+        <a href="?shelf=paused">paused (7)</a><a href="?tag=on-hold">on-hold (1)</a>]] },
+        [GR .. "/review/list?shelf=paused&per_page=30&page=1&view=table"] = { 200, {}, "" },
+        [GR .. "/review/list?tag=on-hold&per_page=30&page=1&view=table"] = { 200, {}, "" } }, log)
+    local by = {}
+    for _, s in ipairs(a:shelves()) do by[s.slug] = s.param end
+    eq(by, { paused = "shelf", ["on-hold"] = "tag" })
+    a:shelfBooks("paused", 1, "shelf")
+    a:shelfBooks("on-hold", 1, "tag")
+    eq({ log[#log - 1].url, log[#log].url }, { GR .. "/review/list?shelf=paused&per_page=30&page=1&view=table",
+        GR .. "/review/list?tag=on-hold&per_page=30&page=1&view=table" })
 end)
 
 H.done()

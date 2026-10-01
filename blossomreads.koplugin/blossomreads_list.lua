@@ -170,7 +170,11 @@ function M.shelf(plugin, slug)
     local page = 1
     local function load()
         local got = plugin:busy(function(api)
-            local list, more_or_err = api:shelfBooks(slug, page)
+            local param
+            for _i, sh in ipairs((plugin:getSetting("shelves") or {}).list or {}) do
+                if sh.slug == slug then param = sh.param end
+            end
+            local list, more_or_err = api:shelfBooks(slug, page, param)
             if not list then return nil, more_or_err end
             return { list = list, more = more_or_err }
         end)

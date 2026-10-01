@@ -108,9 +108,10 @@ function Api:shelves()
     local names = {}
     local arr = body:match("new%s+ShelfChooser%s*%(.-(%b[])")
     for name in (arr or ""):gmatch('"([^"]+)"') do names[#names + 1] = name end
-    local counts = {}
+    -- Goodreads links status shelves (custom ones too, like "paused") with shelf=, tags with tag=.
+    local counts, params = {}, {}
     for kind, name, n in body:gmatch("[%?&](%a+)=([%w%-_%.]+)['\"]?[^>]*>[^<]-%((%d+)%)") do
-        if kind == "shelf" or kind == "tag" then counts[name] = tonumber(n) end
+        if kind == "shelf" or kind == "tag" then counts[name], params[name] = tonumber(n), kind end
     end
     if #names == 0 then
         for name in pairs(counts) do names[#names + 1] = name end
@@ -120,16 +121,18 @@ function Api:shelves()
     for _, name in ipairs(names) do
         if not seen[name] then
             seen[name] = true
-            out[#out + 1] = { slug = name, custom = not DEFAULT_SHELVES[name], count = counts[name] }
+            out[#out + 1] = { slug = name, custom = not DEFAULT_SHELVES[name], count = counts[name],
+                param = params[name] or (DEFAULT_SHELVES[name] and "shelf" or "tag") }
         end
     end
     if #out == 0 then return nil, "unexpected" end
     return out
 end
 
--- One page (up to 30) of a shelf: books, has_more.
-function Api:shelfBooks(slug, page)
-    local param = (DEFAULT_SHELVES[slug] and "shelf=" or "tag=") .. Http.urlencode(slug)
+-- One page (up to 30) of a shelf: books, has_more. param: "shelf" or "tag" (from shelves()).
+function Api:shelfBooks(slug, page, param)
+    param = param or (DEFAULT_SHELVES[slug] and "shelf" or "tag")
+    param = param .. "=" .. Http.urlencode(slug)
     local r = self.http:get(string.format("%s/review/list?%s&per_page=30&page=%d&view=table", BASE, param, page or 1))
     if r.err then return nil, r.err end
     local body = r.body or ""
