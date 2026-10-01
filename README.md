@@ -133,6 +133,10 @@ Everything is in **Tools (🔧) → ❀ Blossom reading diary**:
 
 Both **Blossom reading diary** and **This book in Blossom** can be bound to a gesture.
 
+**Using Simple UI?** Add Blossom as a quick action of type **System action → Blossom reading diary**
+(or **This book in Blossom**), not as a *plugin* action. Simple UI's plugin actions only find plugins
+while the bookshelf is open, so inside a book they say "Plugin not available". System actions work everywhere.
+
 <br clear="right">
 
 ### Getting around
