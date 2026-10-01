@@ -47,15 +47,36 @@ local function has(list, value)
     return false
 end
 
+-- The day a finished book was finished (KOReader's status date) goes to Goodreads as its read
+-- date; finishing it again on another day after reading it again is a reread.
+local function readDateAction(actions, now, saved, opts)
+    local day = now.finished_on
+    if opts.send_dates == false or not day or has(saved.reads_sent, day) or saved.dates_skipped == day then return end
+    local first = not (saved.reads_sent and #saved.reads_sent > 0)
+    if first or saved.rereading then
+        actions[#actions + 1] = { type = "read_date", ended = day, mode = first and "first" or "reread" }
+    end
+end
+
+-- Progress fell well below where it was when the book was read: it's being read again.
+local function rereadingAction(actions, now, saved, opts)
+    local pct = tonumber(now.pct)
+    if opts.send_dates ~= false and not saved.rereading and saved.read_pct and pct and pct + 10 < saved.read_pct then
+        actions[#actions + 1] = { type = "rereading" }
+    end
+end
+
 -- Reading status first: progress and finishing always beat a collection.
 local function statusActions(actions, now, saved, opts, shelves)
     local pct = tonumber(now.pct)
+    rereadingAction(actions, now, saved, opts)
     local finished = now.status == "complete" or (opts.complete_at_99 and pct and pct >= 99)
     if finished then
         -- Finishing is an explicit signal, so it applies even over a pinned shelf.
         if saved.pushed_shelf ~= Plan.READ then
             actions[#actions + 1] = { type = "shelf", shelf = Plan.READ }
         end
+        readDateAction(actions, now, saved, opts)
         return -- Goodreads records 100% itself when a book is marked Read
     end
     if saved.pushed_shelf == Plan.READ then return end
@@ -97,11 +118,13 @@ local function customActions(actions, saved, shelves)
     end
 end
 
--- now: { pct = 0..100 (whole) or nil, status = "complete" | "abandoned" | other }
--- saved: { pushed_pct, pushed_shelf, pinned_shelf, collections_sent }
--- opts: { complete_at_99, collection_shelves = { slug, … } }
+-- now: { pct = 0..100 (whole) or nil, status = "complete" | "abandoned" | other,
+--        finished_on = "YYYY-MM-DD" (KOReader's date for "finished") }
+-- saved: { pushed_pct, pushed_shelf, pinned_shelf, collections_sent, reads_sent = { day, … },
+--          read_pct, rereading, dates_skipped }
+-- opts: { complete_at_99, collection_shelves = { slug, … }, send_dates (default on) }
 -- Returns a list of { type = "shelf", shelf[, custom] } / { type = "unshelf", shelf } /
--- { type = "progress", pct }.
+-- { type = "progress", pct } / { type = "read_date", ended, mode } / { type = "rereading" }.
 function Plan.planBook(now, saved, opts)
     now, saved, opts = now or {}, saved or {}, opts or {}
     local shelves = opts.collection_shelves or {}

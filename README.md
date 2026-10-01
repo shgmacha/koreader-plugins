@@ -17,7 +17,7 @@ This repo holds two sister plugins:
 | Plugin | What it does |
 |---|---|
 | 🌸 **Blossom** (`blossom.koplugin`) | Your reading diary, from KOReader's statistics |
-| 🌼 **Blossom Reads** (`blossomreads.koplugin`) | Goodreads sync (progress, shelves, collections, ratings, challenge), in the same style. [Full guide →](docs/blossom-reads.md) |
+| 🌼 **Blossom Reads** (`blossomreads.koplugin`) | Goodreads sync (progress, shelves, collections, read dates, rereads, ratings, challenge), in the same style. [Full guide →](docs/blossom-reads.md) |
 
 ---
 
@@ -207,8 +207,12 @@ with Goodreads, and every screen floats over your book in Blossom's soft style.
 - **Collections become shelves:** *To Be Read* → Want to Read, *favorites* → a favorites shelf,
   any other collection → a shelf of the same name. Your real reading status always wins.
   Custom shelves are kept matched (removed when the book leaves the collection).
-- **Every book gets linked:** by ISBN, its details, or a `Title - Author.epub` file name, a few
-  per sync.
+- **Read dates and rereads:** finished books reach Goodreads with the day you finished them
+  (and when you started, from your reading stats), so they count in the right year's challenge.
+  Reading a book again and finishing it adds a new read date.
+- **Every book gets linked:** by ISBN, its details, or a `Title - Author.epub` file name. Sync
+  now finds every finished book in your library, and the edition you already own on Goodreads
+  is preferred.
 - **This book, shelves, search and your reading challenge,** as floating Blossom pages. With
   Blossom installed, the yearly goal stays the same in both.
 

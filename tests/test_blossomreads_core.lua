@@ -543,4 +543,125 @@ test("api: taking a book off a shelf posts a=remove", function()
     assert(log[#log].body:find("a=&"), log[#log].body)
 end)
 
+test("http: JSON writer (objects sorted, empty arrays marked, strings escaped, round trip)", function()
+    eq(Http.jsonEncode({ b = 1, a = { 1, 2 }, c = Http.array(), d = {}, e = false, f = 'q"u\\o\nte' }),
+        [[{"a":[1,2],"b":1,"c":[],"d":{},"e":false,"f":"q\"u\\o\nte"}]])
+    local v = { bookId = "kca://book/x", sessions = { { id = "new-1", endedDate = { year = 2025, month = 11, day = 18 }, startedDate = Http.null } } }
+    eq(Http.json(Http.jsonEncode(v)), { bookId = "kca://book/x", sessions = { { id = "new-1", endedDate = { year = 2025, month = 11, day = 18 } } } })
+    eq(Http.jsonEncode({ "x", { n = 1.5 } }), [=[["x",{"n":1.5}]]=])
+    eq(Http.jsonEncode({ startedDate = Http.null }), [[{"startedDate":null}]])
+end)
+
+local Review = require("blossomreads_review")
+local Fixtures = require("blossomreads_fixtures")
+local reviewPage, ACTION_JS = Fixtures.reviewPage, Fixtures.ACTION_JS
+
+-- A fake Goodreads that keeps reading sessions and applies submitted forms.
+local function fakeGoodreads(o)
+    local state = { sessions = o.sessions, posts = {}, chunk_gets = 0, review = o.review, notes = o.notes, owned = o.owned }
+    state.transport = function(req)
+        if req.url:find("/review/edit/500$") and req.method == "GET" then
+            return 200, {}, reviewPage{ sessions = state.sessions, review = state.review, notes = state.notes, owned = state.owned, shelvings = o.shelvings }
+        end
+        if req.url:find("/_next/static/chunks/") then
+            state.chunk_gets = state.chunk_gets + 1
+            if req.url:find("5305%-b%.js$") then return 200, {}, ACTION_JS end
+            return 200, {}, "/* nothing here */"
+        end
+        if req.url:find("/review/edit/500$") and req.method == "POST" then
+            state.posts[#state.posts + 1] = req
+            if o.ignore_save then return 200, {}, "0:[]" end
+            local args = Http.json(req.body)
+            local saved = {}
+            for i, s in ipairs(args[1].readingSessions) do
+                saved[i] = { id = s.id:find("^new%-") and ("kca://reading_session/n" .. i) or s.id, bookId = s.bookId,
+                    state = s.state, startedDate = s.startedDate, endedDate = s.endedDate }
+            end
+            state.sessions = saved
+            return 200, { ["content-type"] = "text/x-component" }, "0:{}"
+        end
+        return 404, {}, ""
+    end
+    return state
+end
+
+test("review: parses the review page (sessions with resolved dates, notes, owned, scripts)", function()
+    local page = Review.parse(reviewPage{ notes = 'my "notes"', owned = true, sessions = {
+        { id = "s1", bookId = "kca://book/B500", state = "COMPLETED", startedDate = { year = 2025, month = 9, day = 28 }, endedDate = { year = 2025, month = 11, day = 18 } } } }, 500)
+    eq({ page.book_id, page.has_review, page.notes, page.owned }, { "kca://book/B500", false, 'my "notes"', true })
+    eq(page.sessions[1].endedDate, { year = 2025, month = 11, day = 18 })
+    eq(#page.scripts, 4)
+    eq(Review.parse(reviewPage{ review = true }, 500).has_review, true)
+end)
+
+test("review: finds your other edition already on a shelf", function()
+    local page = Review.parse(reviewPage{ shelvings = {
+        { book = { id = "kca://book/HC", legacyId = 222 }, shelf = { name = "read" }, readingSessions = {} },
+        { book = { id = "kca://book/B500", legacyId = 500 }, shelf = { name = "read" }, readingSessions = {} } } }, 500)
+    eq({ Review.ownEdition(page) }, { "222", "read" })
+    eq(Review.ownEdition(Review.parse(reviewPage{}, 500)), nil)
+end)
+
+test("review: first read fills in the undated session Goodreads made; saved and checked", function()
+    local gr = fakeGoodreads{ sessions = { { id = "kca://reading_session/s1", bookId = "kca://book/B500", state = "COMPLETED" } }, notes = "kept" }
+    local http, cache = Http.new{ transport = gr.transport }, {}
+    local d = { ended = Review.date("2026-09-02"), started = Review.date("2026-08-20") }
+    eq({ Review.addRead(http, 500, d, "first", cache) }, { true, "saved" })
+    eq(gr.sessions, { { id = "kca://reading_session/s1", bookId = "kca://book/B500", state = "COMPLETED",
+        startedDate = { year = 2026, month = 8, day = 20 }, endedDate = { year = 2026, month = 9, day = 2 } } })
+    local post = gr.posts[1]
+    eq({ post.headers["Next-Action"], post.headers["Content-Type"], post.headers["Accept"] },
+        { "6036dfbeef", "text/plain;charset=UTF-8", "text/x-component" })
+    local args = Http.json(post.body)
+    eq({ args[2], args[1].reviewText, args[1].privateNotes, args[1].addToUpdateFeed, args[1].postToBlog, args[1].bookId },
+        { "/review/edit/[id]", "", "kept", false, false, "kca://book/B500" })
+    assert(post.body:find('"startedDate":null', 1, true), "initial sessions keep explicit nulls")
+    eq(cache, { id = "6036dfbeef", chunk = "/_next/static/chunks/5305-b.js" })
+    eq(gr.chunk_gets, 2) -- the route chunk first, then 5305
+end)
+
+test("review: action id is remembered until the page's scripts change", function()
+    local gr = fakeGoodreads{ sessions = {} }
+    local http, cache = Http.new{ transport = gr.transport }, { id = "6036dfbeef", chunk = "/_next/static/chunks/5305-b.js" }
+    Review.addRead(http, 500, { ended = Review.date("2026-01-05") }, "first", cache)
+    eq(gr.chunk_gets, 0)
+    cache.chunk = "/_next/static/chunks/old.js"
+    Review.addRead(http, 500, { ended = Review.date("2026-02-05") }, "reread", cache)
+    eq(gr.chunk_gets, 2)
+end)
+
+test("review: already dated (any edition) → nothing is written for a first read", function()
+    local gr = fakeGoodreads{ sessions = { { id = "s1", bookId = "kca://book/HC", state = "COMPLETED", endedDate = { year = 2025, month = 11, day = 18 } } } }
+    eq({ Review.addRead(Http.new{ transport = gr.transport }, 500, { ended = Review.date("2026-09-02") }, "first", {}) }, { true, "dated" })
+    eq(#gr.posts, 0)
+end)
+
+test("review: a reread adds a new read date, once", function()
+    local gr = fakeGoodreads{ sessions = { { id = "s1", bookId = "kca://book/B500", state = "COMPLETED", endedDate = { year = 2025, month = 11, day = 18 } } } }
+    local http, cache = Http.new{ transport = gr.transport }, {}
+    local d = { ended = Review.date("2026-03-01"), started = Review.date("2026-02-10") }
+    eq({ Review.addRead(http, 500, d, "reread", cache) }, { true, "saved" })
+    eq(#gr.sessions, 2)
+    eq({ Review.addRead(http, 500, d, "reread", cache) }, { true, "already" })
+    eq(#gr.posts, 1)
+end)
+
+test("review: an edition with a review is never written", function()
+    local gr = fakeGoodreads{ sessions = {}, review = true }
+    eq({ Review.addRead(Http.new{ transport = gr.transport }, 500, { ended = Review.date("2026-09-02") }, "first", {}) }, { nil, "has_review" })
+    eq(#gr.posts, 0)
+end)
+
+test("review: a save Goodreads didn't apply is reported, and the action id is looked up again", function()
+    local gr = fakeGoodreads{ sessions = {}, ignore_save = true }
+    local cache = {}
+    eq({ Review.addRead(Http.new{ transport = gr.transport }, 500, { ended = Review.date("2026-09-02") }, "first", cache) }, { nil, "unexpected" })
+    eq(cache, {})
+end)
+
+test("review: dates", function()
+    eq(Review.date("2026-09-02"), { year = 2026, month = 9, day = 2 })
+    eq(Review.date("someday"), nil)
+end)
+
 H.done()

@@ -188,6 +188,44 @@ local function decode(s)
     return value()
 end
 
+-- JSON writer. Lua can't tell [] from {}, so empty lists are marked with Http.array().
+local ARRAY = {}
+function Http.array(t)
+    return setmetatable(t or {}, ARRAY)
+end
+-- An explicit JSON null (a plain nil would drop the key).
+Http.null = setmetatable({}, { __tostring = function() return "null" end })
+
+local function encodeString(v)
+    return '"' .. v:gsub('[%c"\\]', function(c)
+        local named = { ['"'] = '\\"', ["\\"] = "\\\\", ["\n"] = "\\n", ["\r"] = "\\r", ["\t"] = "\\t" }
+        return named[c] or string.format("\\u%04x", c:byte())
+    end) .. '"'
+end
+
+function Http.jsonEncode(v)
+    local t = type(v)
+    if v == nil or v == Http.null then return "null" end
+    if t == "boolean" then return tostring(v) end
+    if t == "number" then
+        if v ~= v or v == math.huge or v == -math.huge then return "null" end
+        return v == math.floor(v) and string.format("%d", v) or tostring(v)
+    end
+    if t == "string" then return encodeString(v) end
+    if t ~= "table" then return "null" end
+    if getmetatable(v) == ARRAY or #v > 0 then
+        local out = {}
+        for i = 1, #v do out[i] = Http.jsonEncode(v[i]) end
+        return "[" .. table.concat(out, ",") .. "]"
+    end
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local out = {}
+    for _, k in ipairs(keys) do out[#out + 1] = encodeString(k) .. ":" .. Http.jsonEncode(v[k]) end
+    return "{" .. table.concat(out, ",") .. "}"
+end
+
 function Http.json(text)
     if type(text) ~= "string" or text == "" then return nil end
     for _, name in ipairs({ "rapidjson", "json" }) do

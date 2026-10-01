@@ -1,7 +1,7 @@
 # 🌼 Blossom Reads — the full guide
 
 Blossom Reads keeps KOReader and Goodreads in step: reading progress, shelves, ratings,
-your KOReader collections and your yearly reading challenge. Every screen floats over your
+read dates and rereads, your KOReader collections and your yearly reading challenge. Every screen floats over your
 book in Blossom's soft, grayscale style. It's built for e-ink readers, and it stays quiet
 unless there's something worth telling you.
 
@@ -24,16 +24,17 @@ unless there's something worth telling you.
 1. [Install](#install)
 2. [Signing in](#signing-in)
 3. [What syncs, and when](#what-syncs-and-when)
-4. [Collections → Goodreads shelves](#collections--goodreads-shelves)
-5. [How books are matched to Goodreads](#how-books-are-matched-to-goodreads)
-6. [The screens](#the-screens)
-7. [Your yearly goal and Blossom](#your-yearly-goal-and-blossom)
-8. [Settings, one by one](#settings-one-by-one)
-9. [Messages you might see](#messages-you-might-see)
-10. [Troubleshooting](#troubleshooting)
-11. [What it stores, and privacy](#what-it-stores-and-privacy)
-12. [Uninstall](#uninstall)
-13. [For developers](#for-developers)
+4. [Read dates and rereads](#read-dates-and-rereads)
+5. [Collections → Goodreads shelves](#collections--goodreads-shelves)
+6. [How books are matched to Goodreads](#how-books-are-matched-to-goodreads)
+7. [The screens](#the-screens)
+8. [Your yearly goal and Blossom](#your-yearly-goal-and-blossom)
+9. [Settings, one by one](#settings-one-by-one)
+10. [Messages you might see](#messages-you-might-see)
+11. [Troubleshooting](#troubleshooting)
+12. [What it stores, and privacy](#what-it-stores-and-privacy)
+13. [Uninstall](#uninstall)
+14. [For developers](#for-developers)
 
 ---
 
@@ -95,11 +96,41 @@ sensible moments.
 |---|---|
 | You start a book (progress above 0%) | Moved to **Currently Reading** |
 | You read further | **Progress** updated (whole percent). It only ever goes *up*: re-reading never moves Goodreads backwards |
-| You mark it finished in KOReader (book status "Finished") | Moved to **Read** |
+| You mark it finished in KOReader (book status "Finished") | Moved to **Read**, with that day as its **date read** ([more](#read-dates-and-rereads)) |
 | You reach 99% and **Mark Read at 99%** is on | Moved to **Read** |
 | You mark it "On hold" | Nothing changes. Pick *DNF* yourself on the This book card if you want |
 | You pick a shelf yourself on the This book card | That shelf is kept. Automatic *Currently Reading* won't override it, but finishing the book still marks it Read |
 | You rate it with hearts on the This book card | The star rating on Goodreads |
+
+## Read dates and rereads
+
+Goodreads counts a book toward a year's reading challenge by its **date read**. Blossom Reads
+fills it in:
+
+- **Date finished:** the day KOReader marked the book *Finished*.
+- **Date started:** the first page you read, from KOReader's reading statistics (when known).
+- **Books you finished before installing Blossom Reads** get their own finish dates too, so they
+  count in the year you actually read them, not this year.
+- **If Goodreads already has a date** for the book (in any edition), it's left alone.
+
+**Rereads.** Read a finished book again from (near) the beginning, then mark it *Finished* again
+on a later day. Goodreads gets a **new read date**, and the reread counts toward that year's
+challenge.
+- A book you marked finished without reading it through (say, at 13%) isn't treated as a reread.
+- Changing a book's status back and forth on the same day doesn't create one.
+
+**How it works.** Shelving a book as Read on Goodreads creates a "reading session" with no
+dates. Blossom Reads then opens the book's Goodreads review page and saves the dates there, the
+same way the website does.
+
+**What it will and won't touch:**
+- It only saves dates on editions **without a written review**, so a review can never be changed.
+  Those books are skipped and logged.
+- Your private notes are sent back exactly as they were.
+- Nothing is posted to your update feed or blog.
+- Each save is checked by reloading the page.
+
+You can turn this off with **Send read dates and rereads**.
 
 ## Collections → Goodreads shelves
 
@@ -139,9 +170,11 @@ shelf, to a shelf of your own naming, or not at all.
 Each book on your e-reader has to be **linked** to its Goodreads book before it can sync.
 Blossom Reads does this by itself:
 
-- **When:** on every sync, a few books at a time (8 per sync, so it never takes long). It starts
-  with books in your collections, then your reading history. A book is also linked when you
-  open it while Wi-Fi is on.
+- **When:** on every sync, a few books at a time.
+  - **Sync now** links up to 25 and first looks for every book marked *Finished* anywhere in
+    your library.
+  - Automatic syncs link up to 8, from your collections and reading history.
+  - A book is also linked when you open it while Wi-Fi is on.
 - **How:**
   1. The book's **ISBN or ASIN**, if it has one. Goodreads finds that exact edition.
   2. Otherwise its **title and author**: from the book's own details, from the Cover Browser
@@ -152,6 +185,8 @@ Blossom Reads does this by itself:
      clear best result.
 - **No clear match?** The book is left unlinked and isn't searched again for a week. Link it
   yourself: open it, then **This book → Find on Goodreads**.
+- **Your edition:** if you already have the book on a Goodreads shelf in another edition (say,
+  the hardcover), that edition is linked. You don't get a duplicate.
 - **Wrong match?** **This book → Not this book? Find another**, or **Unlink**.
 
 ## The screens
@@ -204,6 +239,7 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 | **Sync collections to shelves** | Mirror KOReader collections onto Goodreads shelves | On |
 | **Collections → shelves** | Per collection: Automatic, a status shelf, another shelf, or Don't sync | Automatic |
 | **Mark Read at 99%** | Treat 99% as finished | Off |
+| **Send read dates and rereads** | Date read from KOReader's finish date; rereads as new read dates | On |
 | **Share my yearly goal with Blossom** | Keep Blossom's goal and the Goodreads goal equal (only shown with Blossom installed) | On |
 | **Sign in / Signed in as …** | Sign in, or sign out | — |
 | **Remember password** | Keep the password, encrypted. Turning it off deletes it | On |
@@ -217,7 +253,7 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 
 | Message | What it means | What to do |
 |---|---|---|
-| *Goodreads ♡ 2 books updated · 3 books linked* | A sync sent changes | Nothing ♡ |
+| *Goodreads ♡ 2 books updated · 3 books linked · 2 read dates added* | A sync sent changes | Nothing ♡ |
 | *Up to date ♡* | Nothing needed sending | Nothing |
 | *Couldn't sync — no Wi-Fi ☆* | Goodreads couldn't be reached | Turn Wi-Fi on; it'll catch up |
 | *Goodreads is busy right now, please try again later ☆* | Goodreads' firewall asked for a check | Try later; you stay signed in |
@@ -233,6 +269,12 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 - Run **Sync now**. The note says how many books were updated and linked.
 - Only linked books sync. Open the book and check **This book**. If it says *Not linked yet*,
   tap **Find on Goodreads**.
+
+**A finished book has no date read on Goodreads.**
+- Check that the book is linked and marked *Finished* in KOReader, then run Sync now.
+- If that edition has a **written review** on Goodreads, Blossom Reads leaves it alone on
+  purpose, so add the date on goodreads.com.
+- `crash.log` lines starting with `BlossomReads` show other failures.
 
 **A book is on the wrong shelf.**
 - Pick the right one on **This book**. A shelf you pick yourself is kept.
@@ -258,7 +300,7 @@ KOReader version, and your device.
 | `settings/blossomreads/session.lua` | The Goodreads sign-in (cookies), **encrypted** |
 | `settings/blossomreads/credentials.lua` | Email and password, **encrypted**, only with *Remember password* |
 | `settings/blossomreads/keyring.lua` | The encryption key |
-| `settings/blossomreads/books.lua` | Which file is which Goodreads book, and what was last sent |
+| `settings/blossomreads/books.lua` | Which file is which Goodreads book, what was last sent, and which read dates were sent |
 | `settings/blossomreads/covers/` | Up to 60 cached cover pictures |
 
 - **Encryption:** uses AES through the libcrypto that ships with KOReader. It keeps secrets out
@@ -294,6 +336,7 @@ for t in core plan engine load; do luajit tests/test_blossomreads_$t.lua; done
 | `blossomreads_http.lua` | Cookie jar, redirects, retries, error classification, failure log |
 | `blossomreads_login.lua` | Amazon sign-in (two-page flow, code, picture puzzle), session and saved password |
 | `blossomreads_api.lua` | The Goodreads calls: search, shelves, progress, rating, challenge, goal |
+| `blossomreads_review.lua` | Read dates and rereads through the review page (parse, find the save action, save, verify) |
 | `blossomreads_identify.lua` | ISBN / ASIN / file-name parsing and title-and-author scoring |
 | `blossomreads_store.lua` / `_secret.lua` / `_covers.lua` | Files, encryption, cover cache |
 | `blossomreads_view.lua` / `_book.lua` / `_list.lua` / `_theme.lua` | The floating Blossom pages |

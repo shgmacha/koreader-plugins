@@ -156,4 +156,61 @@ test("collections: custom shelves still sync for finished and abandoned books", 
     eq(plan({ pct = 40, status = "abandoned" }, {}, c("favorites")), { { type = "shelf", shelf = "favorites", custom = true } })
 end)
 
+-- Read dates and rereads
+local function only(actions, kind)
+    local out = {}
+    for _, a in ipairs(actions) do if a.type == kind then out[#out + 1] = a end end
+    return out
+end
+
+test("dates: finishing sends Read and its finish date (first read)", function()
+    eq(plan({ pct = 100, status = "complete", finished_on = "2026-09-02" }, { pushed_shelf = "currently-reading" }),
+        { { type = "shelf", shelf = "read" }, { type = "read_date", ended = "2026-09-02", mode = "first" } })
+end)
+
+test("dates: a book already Read without a date gets its date; once", function()
+    eq(plan({ status = "complete", finished_on = "2025-11-18" }, { pushed_shelf = "read" }),
+        { { type = "read_date", ended = "2025-11-18", mode = "first" } })
+    eq(plan({ status = "complete", finished_on = "2025-11-18" }, { pushed_shelf = "read", reads_sent = { "2025-11-18" } }), {})
+end)
+
+test("dates: no finish date known (e.g. 99% rule) → no date action", function()
+    eq(only(plan({ pct = 99 }, { pushed_shelf = "currently-reading" }, { complete_at_99 = true }), "read_date"), {})
+end)
+
+test("dates: turned off → no date actions", function()
+    eq(only(plan({ status = "complete", finished_on = "2026-09-02" }, {}, { send_dates = false }), "read_date"), {})
+end)
+
+test("dates: a skipped date (book has a review) isn't retried", function()
+    eq(plan({ status = "complete", finished_on = "2026-09-02" }, { pushed_shelf = "read", dates_skipped = "2026-09-02" }), {})
+end)
+
+test("rereads: progress dropping well below the finished point starts a reread", function()
+    eq(plan({ pct = 4, status = "reading" }, { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100 }),
+        { { type = "rereading" } })
+    -- only once
+    eq(plan({ pct = 30 }, { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100, rereading = true }), {})
+end)
+
+test("rereads: marked finished early (13%) and still at 13% isn't a reread", function()
+    eq(plan({ pct = 13, status = "complete", finished_on = "2025-11-18" },
+        { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 13 }), {})
+end)
+
+test("rereads: finishing again on a new day adds a reread", function()
+    eq(plan({ pct = 100, status = "complete", finished_on = "2026-10-01" },
+        { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 4, rereading = true }),
+        { { type = "read_date", ended = "2026-10-01", mode = "reread" } })
+end)
+
+test("rereads: a new finish date without reading again isn't a reread", function()
+    eq(plan({ pct = 100, status = "complete", finished_on = "2026-10-01" },
+        { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100 }), {})
+end)
+
+test("rereads: rereading a Read book doesn't move it back to Currently Reading", function()
+    eq(only(plan({ pct = 20 }, { pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100, rereading = true }), "shelf"), {})
+end)
+
 H.done()

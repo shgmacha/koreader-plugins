@@ -27,11 +27,39 @@ function Engine.run(ctx)
     for _, item in ipairs(ctx.items or {}) do
         local entry = ctx.books[item.file]
         if entry and entry.gid then
-            local before = s.pushed + s.shelved
-            local opts = { complete_at_99 = (ctx.opts or {}).complete_at_99, collection_shelves = item.shelves }
+            local before = s.pushed + s.shelved + (s.dated or 0)
+            local opts = { complete_at_99 = (ctx.opts or {}).complete_at_99, collection_shelves = item.shelves,
+                send_dates = (ctx.opts or {}).send_dates }
             for _, action in ipairs(Plan.planBook(item.now, entry, opts)) do
                 local ok, err
-                if action.type == "shelf" and action.custom then
+                if action.type == "rereading" then
+                    entry.rereading = true -- remembered only; nothing to send yet
+                    s.changed = true
+                    ok = true
+                elseif action.type == "read_date" then
+                    local Review = require("blossomreads_review")
+                    local read = { ended = Review.date(action.ended) }
+                    if ctx.started then
+                        local day = ctx.started(item.file, action.mode == "reread" and (entry.reads_sent or {})[#(entry.reads_sent or {})] or nil)
+                        local started = Review.date(day)
+                        if started and Review.dateKey(started) <= Review.dateKey(read.ended) then read.started = started end
+                    end
+                    local what
+                    ok, what = ctx.api:addRead(entry.gid, read, action.mode)
+                    if ok then
+                        entry.reads_sent = entry.reads_sent or {}
+                        table.insert(entry.reads_sent, action.ended)
+                        entry.read_pct, entry.rereading = tonumber(item.now.pct) or 100, nil
+                        if what == "saved" then s.dated = (s.dated or 0) + 1 end
+                        s.changed = true
+                    elseif what == "has_review" then
+                        -- Never touch a book with a review; don't try this date again.
+                        entry.dates_skipped, ok = action.ended, true
+                        s.changed = true
+                    else
+                        err = what
+                    end
+                elseif action.type == "shelf" and action.custom then
                     -- A collection's own shelf, alongside the reading status.
                     ok, err = ctx.api:setShelf(entry.gid, action.shelf)
                     if ok then
@@ -73,7 +101,7 @@ function Engine.run(ctx)
                     break -- keep this book's order; the next sync retries it
                 end
             end
-            if s.pushed + s.shelved > before then s.books = s.books + 1 end
+            if s.pushed + s.shelved + (s.dated or 0) > before then s.books = s.books + 1 end
         end
     end
     if ctx.goal then Engine.syncGoal(ctx.api, ctx.goal, s) end

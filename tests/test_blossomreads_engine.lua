@@ -24,6 +24,14 @@ local function fakeApi(o)
         if ok then return true end
         return nil, err
     end
+    function api:addRead(gid, read, mode)
+        local d = read.ended
+        self.calls[#self.calls + 1] = string.format("read:%s=%d-%02d-%02d%s %s", gid, d.year, d.month, d.day,
+            read.started and string.format(" from %d-%02d-%02d", read.started.year, read.started.month, read.started.day) or "", mode)
+        local err = self.fail[gid]
+        if err then return nil, err end
+        return true, self.read_result or "saved"
+    end
     function api:challenge()
         if self.ch_err then return nil, self.ch_err end
         return self.ch and { goal = self.ch.goal, read = self.ch.read }
@@ -153,6 +161,59 @@ test("engine/collections: starting a TBR book moves it to Currently Reading", fu
     local api = fakeApi()
     Engine.run{ api = api, books = b, items = { { file = "/b/dune.epub", now = { pct = 3 }, shelves = { "to-read" } } } }
     eq(api.calls, { "shelf:1=currently-reading", "progress:1=3" })
+end)
+
+test("engine/dates: a finished book gets Read and its date (with the start date from stats)", function()
+    local api, b = fakeApi(), { ["/b/dune.epub"] = { gid = "1", pushed_shelf = "currently-reading" } }
+    local s = Engine.run{ api = api, books = b, started = function() return "2026-08-20" end,
+        items = { { file = "/b/dune.epub", now = { pct = 100, status = "complete", finished_on = "2026-09-02" } } } }
+    eq(api.calls, { "shelf:1=read", "read:1=2026-09-02 from 2026-08-20 first" })
+    eq({ b["/b/dune.epub"].reads_sent, b["/b/dune.epub"].read_pct, s.dated, s.books }, { { "2026-09-02" }, 100, 1, 1 })
+    api.calls = {}
+    Engine.run{ api = api, books = b, items = { { file = "/b/dune.epub", now = { pct = 100, status = "complete", finished_on = "2026-09-02" } } } }
+    eq(api.calls, {})
+end)
+
+test("engine/dates: a start date after the finish date is dropped", function()
+    local api = fakeApi()
+    Engine.run{ api = api, books = { ["/b/x"] = { gid = "1", pushed_shelf = "read" } }, started = function() return "2026-10-01" end,
+        items = { { file = "/b/x", now = { status = "complete", finished_on = "2026-09-02" } } } }
+    eq(api.calls, { "read:1=2026-09-02 first" })
+end)
+
+test("engine/dates: a book with a review is skipped for good; other failures retry", function()
+    local api = fakeApi{ fail = { ["1"] = "has_review" } }
+    local b = { ["/b/x"] = { gid = "1", pushed_shelf = "read" } }
+    local items = { { file = "/b/x", now = { status = "complete", finished_on = "2026-09-02" } } }
+    local s = Engine.run{ api = api, books = b, items = items }
+    eq({ b["/b/x"].dates_skipped, b["/b/x"].reads_sent, s.failed }, { "2026-09-02", nil, 0 })
+    api.calls = {}
+    Engine.run{ api = api, books = b, items = items }
+    eq(api.calls, {})
+    local b2 = { ["/b/x"] = { gid = "1", pushed_shelf = "read" } }
+    local api2 = fakeApi{ fail = { ["1"] = "unexpected" } }
+    eq(Engine.run{ api = api2, books = b2, items = items }.failed, 1)
+    eq(b2["/b/x"].reads_sent, nil)
+end)
+
+test("engine/rereads: reading again is remembered, finishing again adds a reread with its own start", function()
+    local api = fakeApi()
+    local b = { ["/b/x"] = { gid = "1", pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100 } }
+    local starts = {}
+    local started = function(_, after) starts[#starts + 1] = after; return "2026-09-10" end
+    Engine.run{ api = api, books = b, started = started, items = { { file = "/b/x", now = { pct = 3, status = "reading" } } } }
+    eq({ b["/b/x"].rereading, api.calls }, { true, {} })
+    Engine.run{ api = api, books = b, started = started, items = { { file = "/b/x", now = { pct = 100, status = "complete", finished_on = "2026-10-01" } } } }
+    eq(api.calls, { "read:1=2026-10-01 from 2026-09-10 reread" })
+    eq({ b["/b/x"].reads_sent, b["/b/x"].rereading, starts }, { { "2025-11-18", "2026-10-01" }, nil, { "2025-11-18" } })
+end)
+
+test("engine/dates: Goodreads already had a date → recorded as sent, not counted as new", function()
+    local api = fakeApi()
+    api.read_result = "dated"
+    local b = { ["/b/x"] = { gid = "1", pushed_shelf = "read" } }
+    local s = Engine.run{ api = api, books = b, items = { { file = "/b/x", now = { status = "complete", finished_on = "2025-11-18" } } } }
+    eq({ b["/b/x"].reads_sent, s.dated, s.books }, { { "2025-11-18" }, nil, 0 })
 end)
 
 H.done()

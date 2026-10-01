@@ -96,10 +96,25 @@ local stubs = {
         return (s:gsub("%%(%d)", function(i) return tostring(args[tonumber(i)]) end))
     end },
     ["readcollection"] = collections,
+    ["util"] = { partialMD5 = function(file) return "abc123" end },
+    ["lua-ljsqlite3/init"] = { open = function()
+        return { rowexec = function(_, sql) _G.LAST_SQL = sql; return _G.STATS_FIRST end, close = function() end }
+    end },
     ["readhistory"] = history,
-    ["libs/libkoreader-lfs"] = { attributes = function(p, what)
+    ["libs/libkoreader-lfs"] = { dir = function(p)
+        local names, f = {}, io.popen('ls -a "' .. p .. '" 2>/dev/null')
+        for line in f:lines() do names[#names + 1] = line end
+        f:close()
+        local i = 0
+        return function() i = i + 1; return names[i] end
+    end, attributes = function(p, what)
         if p:find("blossom%.koplugin$") then return _G.BLOSSOM_INSTALLED and "directory" or nil end
         if what == "mode" and on_disk[p] then return "file" end
+        if _G.REAL_ROOT and p:sub(1, #_G.REAL_ROOT) == _G.REAL_ROOT and what == "mode" then
+            if os.execute('test -d "' .. p .. '"') == 0 then return "directory" end
+            if os.execute('test -f "' .. p .. '"') == 0 then return "file" end
+            return nil
+        end
         local sc = sidecars[p:match("^(.-)%.sdr$") or ""]
         if sc and what == "modification" then return sc.mtime or 0 end
         return nil
@@ -152,6 +167,7 @@ local REVIEW_LIST = [[<meta name="csrf-token" content="TOK" /><a href="/user/sho
 local net = { log = {}, routes = {} }
 local function resetNet()
     net.log = {}
+    net.handler = nil
     net.routes = {
         [GR .. "/review/list"] = { 200, {}, REVIEW_LIST },
         [GR .. "/shelf/add_to_shelf"] = { 200, {}, "{}" },
@@ -163,6 +179,10 @@ resetNet()
 local function transport(req)
     net.log[#net.log + 1] = req.method .. " " .. req.url:gsub("^" .. GR, "")
     if not online then return nil end
+    if net.handler then
+        local st, h, b = net.handler(req)
+        if st then return st, h, b end
+    end
     local r = net.routes[req.url]
     if not r then return 404, {}, "" end
     return r[1], r[2] or {}, r[3] or ""
@@ -212,6 +232,7 @@ local function reset()
     collections.coll = {}
     history.hist = {}
     _G.BLOSSOM_INSTALLED = false
+    _G.REAL_ROOT, _G.STATS_FIRST, _G.LAST_SQL = nil, nil, nil
     resetNet()
     Login.signOut()
     Store.remove("books")
@@ -371,7 +392,7 @@ test("menu: iCloud-style items, status line and toggles", function()
     end
     eq(texts, { "Sync now", "Last sync: never", "Open Blossom Reads", "This book", "Sync when Wi-Fi connects",
         "Sync on wake", "Sync when closing a book", "Link books automatically", "Sync collections to shelves",
-        "Collections → shelves", "Mark Read at 99%", "Sign in to Goodreads", "Remember password" })
+        "Collections → shelves", "Mark Read at 99%", "Send read dates and rereads", "Sign in to Goodreads", "Remember password" })
     eq(items.blossomreads.sorting_hint, "tools")
     local wifi = items.blossomreads.sub_item_table[5]
     eq(wifi.checked_func(), true)
@@ -388,10 +409,10 @@ test("menu: Blossom installed adds the goal toggle (12 items); status after a sy
     local items = {}
     p:addToMainMenu(items)
     local list = items.blossomreads.sub_item_table
-    eq(#list, 14)
-    eq(list[12].text, "Share my yearly goal with Blossom")
+    eq(#list, 15)
+    eq(list[13].text, "Share my yearly goal with Blossom")
     assert(list[2].text_func():find("^Last sync: %d%d:%d%d — goal set to 24 ♥$"), list[2].text_func())
-    eq(list[13].text_func(), "Signed in as 42")
+    eq(list[14].text_func(), "Signed in as 42")
 end)
 
 test("sign-in: dialog → signed in, password remembered, menu refreshed", function()
@@ -814,7 +835,7 @@ test("collections: a book with no match isn't searched again for a week", functi
     eq(net.log, {}) -- no search, and nothing else to send
 end)
 
-test("collections: at most 8 books are linked per sync", function()
+test("collections: at most 8 books are linked per automatic sync", function()
     reset()
     signIn()
     local coll = {}
@@ -826,8 +847,22 @@ test("collections: at most 8 books are linked per sync", function()
     end
     collections.coll = { ["To Be Read"] = coll }
     local p = newPlugin()
-    eq(p:runSync{}.linked, 8)
-    eq(p:runSync{}.linked, 3)
+    eq(p:runSync{ auto = true }.linked, 8) -- automatic syncs stay short
+    eq(p:runSync{ auto = true }.linked, 3)
+end)
+
+test("collections: Sync now links up to 25 books at once", function()
+    reset()
+    signIn()
+    local coll = {}
+    for i = 1, 11 do
+        local f = string.format("/mnt/us/Books/Book %02d - Some Author.epub", i)
+        on_disk[f], coll[f] = true, {}
+        net.routes[GR .. string.format("/book/auto_complete?format=json&q=Book%%20%02d%%20Some%%20Author", i)] = { 200, {},
+            string.format('[{"bookId":%d,"bookTitleBare":"Book %02d","author":{"name":"Some Author"}}]', 200 + i, i) }
+    end
+    collections.coll = { ["To Be Read"] = coll }
+    eq(newPlugin():runSync{}.linked, 11)
 end)
 
 test("collections: 'Don't sync' and the master toggle are respected", function()
@@ -883,6 +918,160 @@ test("menu: Collections → shelves lists each collection and its shelf; choices
     ask.buttons[1][2].callback()
     eq(sub[3].text_func(), "favorites → comfort reads")
     eq(Login.pending(), false)
+end)
+
+-- Read dates, rereads, finished books, editions (fake Goodreads keeps reading sessions)
+local Fixtures = require("blossomreads_fixtures")
+local function readingGoodreads()
+    local gr = { sessions = {}, shelvings = {}, saves = 0 }
+    net.handler = function(req)
+        local gid = req.url:match("/review/edit/(%d+)$")
+        if gid and req.method == "GET" then
+            return 200, {}, Fixtures.reviewPage{ gid = gid, sessions = gr.sessions[gid] or {}, shelvings = gr.shelvings[gid] }
+        end
+        if gid and req.method == "POST" then
+            gr.saves = gr.saves + 1
+            gr.sessions[gid] = Fixtures.applySave(req.body)
+            return 200, {}, "0:{}"
+        end
+        if req.url:find("/_next/static/chunks/") then
+            return 200, {}, req.url:find("5305%-b%.js$") and Fixtures.ACTION_JS or ""
+        end
+        if req.url:find("/shelf/add_to_shelf") and req.body:find("name=read&") then
+            local book = req.body:match("book_id=(%d+)")
+            gr.sessions[book] = gr.sessions[book] or {}
+            if #gr.sessions[book] == 0 then
+                gr.sessions[book][1] = { id = "kca://reading_session/auto" .. book, bookId = "kca://book/B" .. book, state = "COMPLETED" }
+            end
+        end
+    end
+    return gr
+end
+local function ended(s) local d = s and s.endedDate; return d and string.format("%d-%02d-%02d", d.year, d.month, d.day) end
+local function started(s) local d = s and s.startedDate; return d and string.format("%d-%02d-%02d", d.year, d.month, d.day) end
+
+test("dates: Sync now marks a finished book Read with KOReader's finish date and the stats start date", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    _G.STATS_FIRST = os.time{ year = 2026, month = 8, day = 20, hour = 9 }
+    on_disk[SETTINGS .. "/statistics.sqlite3"] = true
+    local p = newPlugin()
+    p:linkBook(C, { gid = "500" })
+    sidecars[C] = { percent_finished = 1, summary = { status = "complete", modified = "2026-09-02" }, mtime = 5 }
+    local s = p:runSync{}
+    eq({ #gr.sessions["500"], ended(gr.sessions["500"][1]), started(gr.sessions["500"][1]) }, { 1, "2026-09-02", "2026-08-20" })
+    eq(Store.open("books"):get(C).reads_sent, { "2026-09-02" })
+    eq(lastCard(), "Goodreads ♡ 1 book updated · 1 read date added")
+    assert(_G.LAST_SQL:find("b.md5 = 'abc123'", 1, true), _G.LAST_SQL)
+    -- the save action id is remembered in settings for next time
+    eq(p:getSetting("review_action").id, "6036dfbeef")
+    net.log = {}
+    p:runSync{}
+    for _, l in ipairs(net.log) do assert(not l:find("review/edit"), l) end
+end)
+
+test("dates: Goodreads already has a date for this book (another edition) → left alone", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    gr.sessions["500"] = { { id = "s-hc", bookId = "kca://book/HC", state = "COMPLETED", endedDate = { year = 2025, month = 11, day = 18 } } }
+    local p = newPlugin()
+    p:linkBook(C, { gid = "500" })
+    Store.open("books"):get(C)
+    local store = Store.open("books"); local e = store:get(C); e.pushed_shelf = "read"; store:set(C, e); store:flush()
+    sidecars[C] = { percent_finished = 0.13, summary = { status = "complete", modified = "2025-11-18" }, mtime = 5 }
+    p:runSync{}
+    eq(gr.saves, 0)
+    eq(Store.open("books"):get(C).reads_sent, { "2025-11-18" })
+end)
+
+test("rereads: reading a finished book again, then finishing it, adds a reread on Goodreads", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    gr.sessions["500"] = { { id = "s1", bookId = "kca://book/B500", state = "COMPLETED", endedDate = { year = 2025, month = 11, day = 18 } } }
+    on_disk[SETTINGS .. "/statistics.sqlite3"] = true
+    local p = newPlugin()
+    local store = Store.open("books")
+    store:set(C, { gid = "500", pushed_shelf = "read", reads_sent = { "2025-11-18" }, read_pct = 100 })
+    store:flush()
+    sidecars[C] = { percent_finished = 0.05, summary = { status = "reading" }, mtime = 5 }
+    p:runSync{}
+    eq(Store.open("books"):get(C).rereading, true)
+    sidecars[C] = { percent_finished = 1, summary = { status = "complete", modified = "2026-10-01" }, mtime = 9 }
+    _G.STATS_FIRST = os.time{ year = 2026, month = 9, day = 12, hour = 9 }
+    p:runSync{}
+    eq({ #gr.sessions["500"], ended(gr.sessions["500"][2]), started(gr.sessions["500"][2]) }, { 2, "2026-10-01", "2026-09-12" })
+    assert(_G.LAST_SQL:find("start_time > " .. os.time{ year = 2025, month = 11, day = 18, hour = 23, min = 59 }, 1, true), _G.LAST_SQL)
+    eq(Store.open("books"):get(C).reads_sent, { "2025-11-18", "2026-10-01" })
+end)
+
+test("edition: a new link uses the edition you already have on a shelf", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    gr.shelvings["103"] = { { book = { id = "kca://book/HC", legacyId = 777 }, shelf = { name = "read" }, readingSessions = {} } }
+    libraryFixture()
+    collections.coll = {}
+    local p = newPlugin()
+    p:runSync{}
+    eq({ Store.open("books"):get(C).gid, Store.open("books"):get(C).linked }, { "777", "edition" })
+end)
+
+test("finished books: Sync now finds finished books anywhere in the library and dates them", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    local root = os.tmpname()
+    os.remove(root)
+    os.execute('mkdir -p "' .. root .. '/Books/Series/Lantern Light - Ada Penrose.sdr"')
+    local book = root .. "/Books/Series/Lantern Light - Ada Penrose.epub"
+    io.open(book, "w"):close()
+    local meta = io.open(root .. "/Books/Series/Lantern Light - Ada Penrose.sdr/metadata.epub.lua", "w")
+    meta:write('return { ["summary"] = { ["status"] = "complete", ["modified"] = "2025-06-30" }, ["percent_finished"] = 1 }')
+    meta:close()
+    _G.REAL_ROOT = root
+    G_reader_settings.data.home_dir = root .. "/Books"
+    sidecars[book] = { percent_finished = 1, summary = { status = "complete", modified = "2025-06-30" }, mtime = 3 }
+    net.routes[GR .. "/book/auto_complete?format=json&q=Lantern%20Light%20Ada%20Penrose"] = { 200, {},
+        '[{"bookId":900,"bookTitleBare":"Lantern Light","author":{"name":"Ada Penrose"}}]' }
+    local p = newPlugin()
+    local s = p:runSync{}
+    eq(s.linked, 1)
+    eq({ Store.open("books"):get(book).pushed_shelf, Store.open("books"):get(book).reads_sent }, { "read", { "2025-06-30" } })
+    eq(ended(gr.sessions["900"][1]), "2025-06-30")
+    -- automatic syncs don't scan the library
+    Store.remove("books")
+    local auto = p:runSync{ auto = true }
+    eq(auto.linked, 0)
+    os.execute('rm -rf "' .. root .. '"')
+end)
+
+test("finished books: an automatic sync also looks at books that were never synced", function()
+    reset()
+    signIn()
+    readingGoodreads()
+    local p = newPlugin()
+    p:linkBook(C, { gid = "500" })
+    sidecars[C] = { percent_finished = 1, summary = { status = "complete", modified = "2026-09-02" }, mtime = 1 }
+    p:setSetting("last_sync", { time = 100 }) -- the .sdr (mtime 1) is older than the last sync
+    p:onNetworkConnected()
+    runScheduled()
+    eq(Store.open("books"):get(C).pushed_shelf, "read")
+end)
+
+test("dates: 'Send read dates and rereads' off → no review pages are touched", function()
+    reset()
+    signIn()
+    local gr = readingGoodreads()
+    local p = newPlugin()
+    p:setSetting("send_dates", false)
+    p:linkBook(C, { gid = "500" })
+    sidecars[C] = { percent_finished = 1, summary = { status = "complete", modified = "2026-09-02" }, mtime = 5 }
+    p:runSync{}
+    eq(gr.saves, 0)
+    for _, l in ipairs(net.log) do assert(not l:find("review/edit"), l) end
 end)
 
 H.done()

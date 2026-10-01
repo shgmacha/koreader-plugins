@@ -204,6 +204,17 @@ function Api:rate(gid, stars)
 end
 
 --------------------------------------------------------------------------------
+-- Read dates (reading sessions, through the review page)
+--------------------------------------------------------------------------------
+
+-- read = { ended = {year,month,day}, started = … }, mode "first" | "reread".
+-- self.review_cache keeps the review page's save-action id between calls.
+function Api:addRead(gid, read, mode)
+    self.review_cache = self.review_cache or {}
+    return require("blossomreads_review").addRead(self.http, gid, read, mode, self.review_cache)
+end
+
+--------------------------------------------------------------------------------
 -- Reading challenge
 --------------------------------------------------------------------------------
 

@@ -32,8 +32,9 @@ local DEFAULTS = {
     share_goal = true,
     remember_password = true,
     sync_collections = true,
+    send_dates = true,
 }
-local LINK_PER_RUN = 8
+local LINK_PER_RUN, LINK_PER_MANUAL_RUN = 8, 25
 local RETRY_UNMATCHED = 7 * 24 * 3600
 local AUTO_THROTTLE = 5 * 60
 
@@ -141,7 +142,9 @@ function BlossomReads:liveProgress()
     local mod = ui.paging or ui.rolling
     local ok, f = pcall(function() return mod and mod:getLastPercent() end)
     local summary = ui.doc_settings and ui.doc_settings:readSetting("summary")
-    return { pct = wholePercent(ok and f), status = type(summary) == "table" and summary.status or nil }
+    summary = type(summary) == "table" and summary or {}
+    return { pct = wholePercent(ok and f), status = summary.status,
+        finished_on = summary.status == "complete" and summary.modified or nil }
 end
 
 local function savedProgress(file)
@@ -149,7 +152,9 @@ local function savedProgress(file)
     if not DocSettings:hasSidecarFile(file) then return nil end
     local ds = DocSettings:open(file)
     local summary = ds:readSetting("summary")
-    return { pct = wholePercent(ds:readSetting("percent_finished")), status = type(summary) == "table" and summary.status or nil }
+    summary = type(summary) == "table" and summary or {}
+    return { pct = wholePercent(ds:readSetting("percent_finished")), status = summary.status,
+        finished_on = summary.status == "complete" and summary.modified or nil }
 end
 
 local function sidecarTime(file)
@@ -206,15 +211,83 @@ local function metadataFor(file)
     end
 end
 
+-- When reading started, from KOReader's statistics: the first page read (after `after`, a
+-- "YYYY-MM-DD", for a reread). Nil when statistics don't know the book.
+function BlossomReads.startedOn(file, after)
+    local db_path = require("datastorage"):getSettingsDir() .. "/statistics.sqlite3"
+    if lfs.attributes(db_path, "mode") ~= "file" then return nil end
+    local ok, result = pcall(function()
+        local DocSettings = require("docsettings")
+        local md5 = DocSettings:hasSidecarFile(file) and DocSettings:open(file):readSetting("partial_md5_checksum")
+        md5 = md5 or require("util").partialMD5(file)
+        if type(md5) ~= "string" or not md5:match("^%x+$") then return nil end
+        local y, m, d = tostring(after or ""):match("^(%d+)%-(%d+)%-(%d+)")
+        local since = y and os.time{ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 23, min = 59 } or 0
+        local SQ3 = require("lua-ljsqlite3/init")
+        local conn = SQ3.open(db_path)
+        local ok2, first = pcall(conn.rowexec, conn, string.format([[
+            SELECT min(p.start_time) FROM page_stat_data p JOIN book b ON b.id = p.id_book
+            WHERE b.md5 = '%s' AND p.start_time > %d;]], md5, since))
+        conn:close()
+        first = ok2 and tonumber(first)
+        return first and first > 0 and os.date("%Y-%m-%d", first) or nil
+    end)
+    return ok and result or nil
+end
+
+-- Books marked finished anywhere in the library (their .sdr next to the book), newest first.
+-- Only on Sync now: it reads every book's .sdr.
+function BlossomReads.finishedInLibrary()
+    local home = G_reader_settings:readSetting("home_dir")
+    if not home or lfs.attributes(home, "mode") ~= "directory" then return {} end
+    local found = {}
+    local function walk(dir, depth)
+        if depth > 6 then return end
+        local ok, iter, state = pcall(lfs.dir, dir)
+        if not ok then return end
+        for name in iter, state do
+            if name ~= "." and name ~= ".." then
+                local path = dir .. "/" .. name
+                if lfs.attributes(path, "mode") == "directory" then
+                    local stem = name:match("^(.*)%.sdr$")
+                    if stem then
+                        for meta in lfs.dir(path) do
+                            local ext = meta:match("^metadata%.(%w+)%.lua$")
+                            if ext then
+                                local ok2, t = pcall(dofile, path .. "/" .. meta)
+                                local summary = ok2 and type(t) == "table" and t.summary
+                                if type(summary) == "table" and summary.status == "complete" then
+                                    found[#found + 1] = { file = dir .. "/" .. stem .. "." .. ext, day = summary.modified or "" }
+                                end
+                            end
+                        end
+                    else
+                        walk(path, depth + 1)
+                    end
+                end
+            end
+        end
+    end
+    walk(home, 0)
+    table.sort(found, function(a, b) return a.day > b.day end)
+    local files = {}
+    for i, f in ipairs(found) do files[i] = f.file end
+    return files
+end
+
 -- Link books from collections and reading history that aren't linked yet (a few per sync).
 -- Returns how many were linked, and a stop error if Goodreads can't be reached.
-function BlossomReads:linkPending(api, books, collections, now)
+function BlossomReads:linkPending(api, books, collections, now, manual)
     local files, seen = {}, {}
     local function add(file)
         if file and not seen[file] then
             seen[file] = true
             files[#files + 1] = file
         end
+    end
+    -- Finished books first (Sync now scans the library for them), then collections, then history.
+    if manual then
+        for _i, file in ipairs(self.finishedInLibrary()) do add(file) end
     end
     local in_coll = {}
     for file in pairs(collections or {}) do in_coll[#in_coll + 1] = file end
@@ -225,7 +298,7 @@ function BlossomReads:linkPending(api, books, collections, now)
 
     local linked, tried = 0, 0
     for _i, file in ipairs(files) do
-        if tried >= LINK_PER_RUN then break end
+        if tried >= (manual and LINK_PER_MANUAL_RUN or LINK_PER_RUN) then break end
         local entry = books[file] or {}
         local recent_miss = entry.unmatched_at and now - entry.unmatched_at < RETRY_UNMATCHED
         if not entry.gid and not recent_miss and lfs.attributes(file, "mode") == "file" then
@@ -234,6 +307,10 @@ function BlossomReads:linkPending(api, books, collections, now)
             local match, how, _ranked, err = Identify.match(function(q) return api:search(q) end, want)
             if err == "signin" or err == "network" or err == "blocked" then return linked, err end
             if match then
+                -- If you already have another edition of this book on a shelf, link that one.
+                local okp, page = pcall(require("blossomreads_review").load, api.http, match.gid)
+                local own = okp and page and require("blossomreads_review").ownEdition(page)
+                if own then match.gid, how = own, "edition" end
                 books[file] = { gid = match.gid, title = match.title, author = match.author, cover = match.cover, linked = how }
                 linked = linked + 1
             elseif not err then
@@ -256,7 +333,9 @@ function BlossomReads:collect(books, opts, collections)
             local tracked = (names and self:getSetting("sync_collections")) or entry.collections_sent
             local now = opts.live and opts.live[file]
             if not now and file == open then now = self:liveProgress() end
-            if not now and (tracked or not opts.since or sidecarTime(file) > opts.since) then now = savedProgress(file) end
+            -- Books never synced yet (e.g. just linked) are always looked at.
+            local fresh = not entry.synced_at and not entry.reads_sent
+            if not now and (tracked or fresh or not opts.since or sidecarTime(file) > opts.since) then now = savedProgress(file) end
             if not now and tracked then now = {} end
             if now then items[#items + 1] = { file = file, now = now, shelves = self:shelvesFor(names) or {} } end
         end
@@ -371,6 +450,8 @@ end
 
 function BlossomReads:_sync(o)
     local api = self:api()
+    api.review_cache = self:getSetting("review_action") or {}
+    local action_before = Store.serialize(api.review_cache)
     local store = Store.open("books")
     local goal
     if self:goalLinked() then
@@ -380,7 +461,8 @@ function BlossomReads:_sync(o)
     local linked, link_err = 0, nil
     if not o.only then
         local before = Store.serialize(store.data)
-        linked, link_err = self:linkPending(api, store.data, self:getSetting("sync_collections") and collections or {}, os.time())
+        linked, link_err = self:linkPending(api, store.data, self:getSetting("sync_collections") and collections or {},
+            os.time(), not o.auto)
         if Store.serialize(store.data) ~= before then store.dirty = true end
     end
     local s
@@ -391,8 +473,9 @@ function BlossomReads:_sync(o)
             api = api,
             books = store.data,
             items = self:collect(store.data, o, collections),
-            opts = { complete_at_99 = self:getSetting("complete_at_99") },
+            opts = { complete_at_99 = self:getSetting("complete_at_99"), send_dates = self:getSetting("send_dates") },
             goal = goal,
+            started = self.startedOn,
         }
     end
     s.linked = linked
@@ -401,6 +484,7 @@ function BlossomReads:_sync(o)
         store.dirty = true
         store:flush()
     end
+    if Store.serialize(api.review_cache) ~= action_before then self:setSetting("review_action", api.review_cache) end
     if s.synced then self:setSetting("goal_synced", s.synced) end
     if s.challenge then
         self:setSetting("challenge", { goal = s.challenge.goal, read = s.challenge.read, at = s.time })
@@ -411,7 +495,7 @@ function BlossomReads:_sync(o)
         self:keepSession(api)
     end
     self:setSetting("last_sync", {
-        time = s.time, books = s.books, linked = s.linked, failed = s.failed, error = s.error,
+        time = s.time, books = s.books, linked = s.linked, dated = s.dated, failed = s.failed, error = s.error,
         goal = s.goal and { value = s.goal.value } or nil,
     })
     return s
@@ -436,6 +520,11 @@ function BlossomReads.summaryText(s)
         parts[#parts + 1] = _("1 book linked")
     elseif (s.linked or 0) > 1 then
         parts[#parts + 1] = T(_("%1 books linked"), s.linked)
+    end
+    if (s.dated or 0) == 1 then
+        parts[#parts + 1] = _("1 read date added")
+    elseif (s.dated or 0) > 1 then
+        parts[#parts + 1] = T(_("%1 read dates added"), s.dated)
     end
     if s.goal and s.goal.value then parts[#parts + 1] = T(_("goal set to %1 ♥"), s.goal.value) end
     if (s.failed or 0) > 0 then parts[#parts + 1] = T(_("%1 couldn't sync"), s.failed) end
@@ -823,6 +912,7 @@ function BlossomReads:addToMainMenu(menu_items)
             sub_item_table_func = function() return self:collectionMenu() end,
         },
         toggle(self, "complete_at_99", _("Mark Read at 99%")),
+        toggle(self, "send_dates", _("Send read dates and rereads")),
     }
     items[#items].separator = not self:blossomInstalled()
     if self:blossomInstalled() then
