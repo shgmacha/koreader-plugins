@@ -83,7 +83,7 @@ function Identify.fromProps(props, file)
         asin = findAsin(props.identifiers) or findAsin(name),
         title = title,
         author = author,
-        -- The book's folder, often its series ("Books/Throne of Glass/…"): a tie-breaker.
+        -- The book's folder, often its series ("Books/Glass Crown/…"): a tie-breaker.
         folder = (file or ""):match("([^/]+)/[^/]+$"),
     }
 end

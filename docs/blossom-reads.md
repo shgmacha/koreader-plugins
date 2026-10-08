@@ -201,7 +201,7 @@ Blossom Reads does this by itself:
      - With an author, the match has to be exact and clearly the best.
      - Without one, Goodreads' top result has to be the only book with that exact title.
      - If several books share the title, the one whose series matches the book's folder wins
-       (e.g. `Books/Throne of Glass/Queen of Shadows.epub`).
+       (e.g. `Books/Glass Crown/Queen of Lanterns.epub`).
 - **No clear match?** The book is left unlinked and isn't searched again for a week. Link it
   yourself: open it, then **This book → Find on Goodreads**.
 - **Your edition:** if you already have the book on a Goodreads shelf in another edition (say,
