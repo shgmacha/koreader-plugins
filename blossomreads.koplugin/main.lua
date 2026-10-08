@@ -33,10 +33,14 @@ local DEFAULTS = {
     remember_password = true,
     sync_collections = true,
     send_dates = true,
+    auto_update_check = true,
 }
 local LINK_PER_RUN, LINK_PER_MANUAL_RUN = 8, 25
+local SCAN_EVERY = 24 * 3600 -- automatic syncs look for finished books at most once a day
+local UNMATCHED_V = 2 -- bump when matching improves, so earlier misses are tried again
 local RETRY_UNMATCHED = 7 * 24 * 3600
 local AUTO_THROTTLE = 5 * 60
+local UPDATE_EVERY = 24 * 3600
 
 -- Shared by the file-manager and reader instances of the plugin.
 local running, last_auto, told_signin = false, 0, false
@@ -51,6 +55,8 @@ function BlossomReads._resetForTests()
 end
 
 function BlossomReads:init()
+    -- Remove what an earlier update left behind (the previous version's folder).
+    if self.path then pcall(require("blossomreads_update").cleanup, self.path) end
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
 end
@@ -275,9 +281,20 @@ function BlossomReads.finishedInLibrary()
     return files
 end
 
+local BOOK_EXT = {
+    epub = true, kepub = true, pdf = true, mobi = true, azw = true, azw3 = true, fb2 = true,
+    cbz = true, djvu = true, txt = true, rtf = true, doc = true, docx = true, odt = true,
+}
+
+-- Only real books are linked: not KOReader's own help pages or other files in history.
+function BlossomReads.isBook(file)
+    local ext = (file or ""):lower():match("%.(%w+)$")
+    return BOOK_EXT[ext] == true and not file:find("/koreader/", 1, true)
+end
+
 -- Link books from collections and reading history that aren't linked yet (a few per sync).
 -- Returns how many were linked, and a stop error if Goodreads can't be reached.
-function BlossomReads:linkPending(api, books, collections, now, manual)
+function BlossomReads:linkPending(api, books, collections, now, manual, scan)
     local files, seen = {}, {}
     local function add(file)
         if file and not seen[file] then
@@ -286,7 +303,7 @@ function BlossomReads:linkPending(api, books, collections, now, manual)
         end
     end
     -- Finished books first (Sync now scans the library for them), then collections, then history.
-    if manual then
+    if scan then
         for _i, file in ipairs(self.finishedInLibrary()) do add(file) end
     end
     local in_coll = {}
@@ -300,8 +317,9 @@ function BlossomReads:linkPending(api, books, collections, now, manual)
     for _i, file in ipairs(files) do
         if tried >= (manual and LINK_PER_MANUAL_RUN or LINK_PER_RUN) then break end
         local entry = books[file] or {}
-        local recent_miss = entry.unmatched_at and now - entry.unmatched_at < RETRY_UNMATCHED
-        if not entry.gid and not recent_miss and lfs.attributes(file, "mode") == "file" then
+        local recent_miss = entry.unmatched_at and entry.unmatched_v == UNMATCHED_V
+            and now - entry.unmatched_at < RETRY_UNMATCHED
+        if not entry.gid and not recent_miss and self.isBook(file) and lfs.attributes(file, "mode") == "file" then
             tried = tried + 1
             local want = Identify.fromProps(metadataFor(file), file)
             local match, how, _ranked, err = Identify.match(function(q) return api:search(q) end, want)
@@ -314,7 +332,7 @@ function BlossomReads:linkPending(api, books, collections, now, manual)
                 books[file] = { gid = match.gid, title = match.title, author = match.author, cover = match.cover, linked = how }
                 linked = linked + 1
             elseif not err then
-                entry.unmatched_at = now
+                entry.unmatched_at, entry.unmatched_v = now, UNMATCHED_V
                 books[file] = entry
             end
         end
@@ -386,6 +404,96 @@ end
 
 function BlossomReads:onNetworkConnected()
     if self:getSetting("auto_on_wifi") then self:autoSync() end
+    self:autoUpdateCheck()
+end
+
+--------------------------------------------------------------------------------
+-- Updates (GitHub releases)
+--------------------------------------------------------------------------------
+
+-- This copy's version, from _meta.lua.
+function BlossomReads:version()
+    if not self._version then
+        local ok, meta = pcall(dofile, (self.path or ".") .. "/_meta.lua")
+        self._version = ok and type(meta) == "table" and meta.version or "?"
+    end
+    return self._version
+end
+
+local UPDATE_ERRORS = {
+    network = _("Couldn't reach GitHub — check Wi-Fi ☆"),
+    blocked = _("GitHub is busy right now, please try again later ☆"),
+    checksum = _("The download didn't check out, so nothing was changed ☆"),
+    bad_zip = _("The update file looked wrong, so nothing was changed ☆"),
+    incomplete = _("The update file looked wrong, so nothing was changed ☆"),
+    write = _("Couldn't write the update to this device ☆"),
+    swap = _("Couldn't replace the plugin folder; your current version is still in place ☆"),
+}
+
+-- Once a day on Wi-Fi: if there's a newer version, ask (never installs by itself).
+function BlossomReads:autoUpdateCheck()
+    if not self:getSetting("auto_update_check") then return end
+    if os.time() - (self:getSetting("last_update_check") or 0) < UPDATE_EVERY then return end
+    self:setSetting("last_update_check", os.time())
+    UIManager:scheduleIn(4, function()
+        local ok, info = pcall(require("blossomreads_update").check, self:version(), self.transport)
+        if ok and info then self:offerUpdate(info) end
+    end)
+end
+
+function BlossomReads:checkForUpdates()
+    self:runWhenOnline(function()
+        local msg = self.note(_("Looking for updates…"))
+        UIManager:show(msg)
+        UIManager:forceRePaint()
+        local ok, info, err = pcall(require("blossomreads_update").check, self:version(), self.transport)
+        UIManager:close(msg)
+        self:setSetting("last_update_check", os.time())
+        if not ok then
+            logger.warn("BlossomReads: update check crashed:", info)
+            info, err = nil, "network"
+        end
+        if info then
+            self:offerUpdate(info)
+        elseif err then
+            self:card(UPDATE_ERRORS[err] or UPDATE_ERRORS.network, 5)
+        else
+            self:card(T(_("You have the latest Blossom Reads (v%1) ♡"), self:version()), 4)
+        end
+    end)
+end
+
+function BlossomReads:offerUpdate(info)
+    local ConfirmBox = require("ui/widget/confirmbox")
+    UIManager:show(ConfirmBox:new{
+        text = T(_("Blossom Reads v%1 is ready ♡\nYou have v%2. Update now?"), info.version, self:version()),
+        ok_text = _("Update"),
+        ok_callback = function() self:installUpdate(info) end,
+    })
+end
+
+function BlossomReads:installUpdate(info)
+    if not self.path then return end
+    local msg = self.note(T(_("Updating to v%1…"), info.version))
+    UIManager:show(msg)
+    UIManager:forceRePaint()
+    local ok, version, err = pcall(require("blossomreads_update").install, info, self.path, { transport = self.transport })
+    UIManager:close(msg)
+    if not ok then
+        logger.warn("BlossomReads: update crashed:", version)
+        version, err = nil, "write"
+    end
+    if not version then
+        logger.warn("BlossomReads: update failed:", err)
+        self:card(UPDATE_ERRORS[err] or UPDATE_ERRORS.write, 6)
+        return
+    end
+    local ConfirmBox = require("ui/widget/confirmbox")
+    UIManager:show(ConfirmBox:new{
+        text = T(_("Updated to v%1 ♡\nRestart KOReader now to use it?"), version),
+        ok_text = _("Restart"),
+        ok_callback = function() UIManager:restartKOReader() end,
+    })
 end
 
 function BlossomReads:onResume()
@@ -461,8 +569,12 @@ function BlossomReads:_sync(o)
     local linked, link_err = 0, nil
     if not o.only then
         local before = Store.serialize(store.data)
+        -- Sync now always looks for finished books; automatic syncs once a day.
+        local now = os.time()
+        local scan = not o.auto or now - (self:getSetting("last_scan") or 0) >= SCAN_EVERY
+        if scan then self:setSetting("last_scan", now) end
         linked, link_err = self:linkPending(api, store.data, self:getSetting("sync_collections") and collections or {},
-            os.time(), not o.auto)
+            now, not o.auto, scan)
         if Store.serialize(store.data) ~= before then store.dirty = true end
     end
     local s
@@ -932,6 +1044,12 @@ function BlossomReads:addToMainMenu(menu_items)
             if Login.signedIn() then self:signOut(touchmenu) else self:signIn(touchmenu) end
         end,
     }
+    items[#items + 1] = {
+        text_func = function() return T(_("Check for updates (v%1)"), self:version()) end,
+        callback = function() self:checkForUpdates() end,
+    }
+    items[#items + 1] = toggle(self, "auto_update_check", _("Check for updates automatically"))
+    items[#items - 2].separator = true
     items[#items + 1] = {
         text = _("Remember password"),
         checked_func = function() return self:getSetting("remember_password") end,

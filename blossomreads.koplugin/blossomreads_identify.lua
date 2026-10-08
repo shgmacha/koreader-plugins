@@ -57,10 +57,12 @@ local function findAsin(text)
 end
 
 -- "(2) Moonlit Orchard - Juniper Hale.epub" -> "Moonlit Orchard", "Juniper Hale" (Title - Author).
--- A leading "(n)" series number and [bracketed] / (parenthesised) extras are dropped.
+-- A leading series number ("(2) ", "2 - ", "2. ") and [bracketed] / (parenthesised) extras are
+-- dropped. Numbers of 4+ digits stay ("1984 - George Orwell").
 function Identify.fromFileName(file)
     local name = ((file or ""):match("([^/]+)$") or ""):gsub("%.%w+$", "")
-    name = name:gsub("^%(%d+%)%s*", ""):gsub("%s*%b[]", ""):gsub("%s*%b()%s*$", "")
+    name = name:gsub("^%(%d+%)%s*", ""):gsub("^%d%d?%d?%s*%-%s+", ""):gsub("^%d%d?%d?%.%s+", "")
+    name = name:gsub("%s*%b[]", ""):gsub("%s*%b()%s*$", "")
     local title, author = name:match("^(.*)%s+%-%s+(.-)%s*$") -- the last " - " separates the author
     if title and title ~= "" and author ~= "" then return title, author end
     return name, nil
@@ -81,6 +83,8 @@ function Identify.fromProps(props, file)
         asin = findAsin(props.identifiers) or findAsin(name),
         title = title,
         author = author,
+        -- The book's folder, often its series ("Books/Throne of Glass/…"): a tie-breaker.
+        folder = (file or ""):match("([^/]+)/[^/]+$"),
     }
 end
 
@@ -126,8 +130,44 @@ function Identify.score(want, cand)
     return math.max(0, math.min(100, score))
 end
 
+local function exactTitle(want, cand)
+    return math.max(similarity(want.title, cand.title), similarity(core(want.title), core(cand.title))) >= 0.999
+end
+
+-- The sure match among one search's results, or nil.
+-- Author known: the best score, at least AUTO_SCORE, not tied.
+-- Author unknown: Goodreads' top result, when it's the only one with exactly this title.
+local function sure(want, hits, ranked)
+    if want.author then
+        local best = ranked[1]
+        if best and best.score >= Identify.AUTO_SCORE and not (ranked[2] and ranked[2].score == best.score) then
+            return best
+        end
+        return nil
+    end
+    local exact = {}
+    for _, c in ipairs(hits) do
+        if exactTitle(want, c) then exact[#exact + 1] = c end
+    end
+    if #exact == 1 and hits[1] == exact[1] then return hits[1] end
+    -- Several books with this title: the one whose series is the book's folder name.
+    if #exact > 1 and want.folder then
+        local series
+        for _, c in ipairs(exact) do
+            local s = (c.full_title or ""):match("%(([^,#)]+),?%s*#[%d%.]+%)%s*$")
+            if s and similarity(s, want.folder) >= 0.999 then
+                if series then return nil end -- still ambiguous
+                series = c
+            end
+        end
+        return series
+    end
+end
+
 -- Returns match, how ("isbn" | "asin" | "title"), ranked candidates (for the picker).
 -- search(query) -> list of { gid, title, author, cover } or nil, err.
+-- Goodreads' search does best with the title alone (adding the author can bury the book under
+-- study guides), so the title goes first and title + author is the fallback.
 function Identify.match(search, want)
     for _, key in ipairs({ "isbn", "asin" }) do
         if want[key] then
@@ -135,21 +175,35 @@ function Identify.match(search, want)
             if hits and hits[1] then return hits[1], key, hits end
         end
     end
-    local query = want.title or ""
-    if want.author then query = query .. " " .. want.author end
-    local hits, err = search(query)
-    if not hits then return nil, nil, nil, err end
-    local ranked = {}
-    for _, c in ipairs(hits) do
-        c.score = Identify.score(want, c)
-        ranked[#ranked + 1] = c
+    local queries = { want.title or "" }
+    if want.author then queries[2] = (want.title or "") .. " " .. want.author end
+    local all, seen, last_err, any = {}, {}, nil, false
+    for _, query in ipairs(queries) do
+        local hits, err = search(query)
+        if hits then
+            any = true
+            local ranked = {}
+            for _, c in ipairs(hits) do
+                c.score = Identify.score(want, c)
+                ranked[#ranked + 1] = c
+            end
+            table.sort(ranked, function(a, b) return a.score > b.score end)
+            local best = sure(want, hits, ranked)
+            for _, c in ipairs(ranked) do
+                if not seen[c.gid] then seen[c.gid] = true; all[#all + 1] = c end
+            end
+            if best then
+                table.sort(all, function(a, b) return a.score > b.score end)
+                return best, "title", all
+            end
+        else
+            last_err = err
+            if err == "network" or err == "signin" or err == "blocked" then break end
+        end
     end
-    table.sort(ranked, function(a, b) return a.score > b.score end)
-    local best = ranked[1]
-    if best and best.score >= Identify.AUTO_SCORE and not (ranked[2] and ranked[2].score == best.score) then
-        return best, "title", ranked
-    end
-    return nil, nil, ranked
+    if not any then return nil, nil, nil, last_err end
+    table.sort(all, function(a, b) return a.score > b.score end)
+    return nil, nil, all
 end
 
 return Identify

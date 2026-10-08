@@ -21,7 +21,7 @@ unless there's something worth telling you.
 
 ## Contents
 
-1. [Install](#install)
+1. [Install and updates](#install)
 2. [Signing in](#signing-in)
 3. [What syncs, and when](#what-syncs-and-when)
 4. [Read dates and rereads](#read-dates-and-rereads)
@@ -49,6 +49,19 @@ unless there's something worth telling you.
 
 Blossom Reads doesn't need [Blossom](../README.md), but it gets along with it nicely (see
 [Your yearly goal and Blossom](#your-yearly-goal-and-blossom)).
+
+### Updates
+
+Blossom Reads updates itself from its GitHub releases:
+- **Check for updates (v1.1.0)** in the menu looks for a newer version. If one exists, it asks
+  *"Update now?"*, then downloads, checks and installs it, and offers to restart KOReader.
+- **Check for updates automatically** (on by default) looks once a day when Wi-Fi connects. It
+  only **asks**; it never installs by itself.
+- **Safety:**
+  - every download is checked against its published SHA-256 checksum
+  - the new version is unpacked and checked before anything is replaced
+  - the previous version is kept until the next start, and put back if the swap fails
+  - GitHub never sees your Goodreads sign-in
 
 > **Coming from Goodreads KO Sync?** Disable or remove `goodreadskosync.koplugin`, otherwise
 > both plugins will sync the same books.
@@ -171,18 +184,24 @@ Each book on your e-reader has to be **linked** to its Goodreads book before it 
 Blossom Reads does this by itself:
 
 - **When:** on every sync, a few books at a time.
-  - **Sync now** links up to 25 and first looks for every book marked *Finished* anywhere in
-    your library.
-  - Automatic syncs link up to 8, from your collections and reading history.
+  - Every book marked *Finished* anywhere in your library comes first. Sync now looks for those
+    every time, automatic syncs once a day.
+  - Then collections and reading history.
+  - Sync now links up to 25 books, automatic syncs up to 8.
   - A book is also linked when you open it while Wi-Fi is on.
+  - Only real books are linked (not KOReader's help pages, for example).
 - **How:**
   1. The book's **ISBN or ASIN**, if it has one. Goodreads finds that exact edition.
-  2. Otherwise its **title and author**: from the book's own details, from the Cover Browser
-     cache, or from the file name. File names like
-     `(2) Moonlit Orchard - Juniper Hale.epub` (*Title - Author*, with an optional `(n)` series
-     number) work well.
-  3. A title-and-author match is only linked automatically when it's exact and there's one
-     clear best result.
+  2. Otherwise its **title**, then title and author. Goodreads' search finds books better by
+     title alone. The details come from the book itself, the Cover Browser cache, or the file
+     name. File names like `(2) Moonlit Orchard - Juniper Hale.epub` and
+     `6 - A Lantern in the Tide.epub` work (*Title - Author*, with an optional series number in
+     front).
+  3. **It only links when it's sure:**
+     - With an author, the match has to be exact and clearly the best.
+     - Without one, Goodreads' top result has to be the only book with that exact title.
+     - If several books share the title, the one whose series matches the book's folder wins
+       (e.g. `Books/Throne of Glass/Queen of Shadows.epub`).
 - **No clear match?** The book is left unlinked and isn't searched again for a week. Link it
   yourself: open it, then **This book → Find on Goodreads**.
 - **Your edition:** if you already have the book on a Goodreads shelf in another edition (say,
@@ -242,6 +261,8 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 | **Send read dates and rereads** | Date read from KOReader's finish date; rereads as new read dates | On |
 | **Share my yearly goal with Blossom** | Keep Blossom's goal and the Goodreads goal equal (only shown with Blossom installed) | On |
 | **Sign in / Signed in as …** | Sign in, or sign out | — |
+| **Check for updates (vX)** | Look for a newer Blossom Reads and install it | — |
+| **Check for updates automatically** | Once a day on Wi-Fi; asks before installing | On |
 | **Remember password** | Keep the password, encrypted. Turning it off deletes it | On |
 
 **Gestures** (Settings → Taps and gestures → Gesture manager → General):
@@ -261,6 +282,8 @@ it saw you finish in KOReader's statistics. The challenge card shows both.
 | *Goodreads asked you to sign in again ♡* | The Goodreads session ended | **Sign in again to Goodreads** in the menu |
 | *That email or password didn't work ☆* | The sign-in was refused | Check them; try signing in on goodreads.com |
 | *Goodreads showed a page Blossom Reads doesn't know yet ☆* | Amazon's sign-in pages changed | Please report it (see below) |
+| *Blossom Reads vX is ready ♡ … Update now?* | A newer version was released | Tap **Update**, then **Restart** |
+| *The download didn't check out, so nothing was changed ☆* | The update didn't match its checksum | Try again later |
 
 ## Troubleshooting
 
@@ -327,6 +350,9 @@ for t in core plan engine load; do luajit tests/test_blossomreads_$t.lua; done
 - Network calls go through an injectable transport, so the tests never touch Goodreads.
 - `tools/screenshots_reads.sh` runs the KOReader macOS build with a made-up library and canned
   Goodreads answers, and saves `docs/screenshots/r*.png`.
+- **Releasing:** bump `version` in `_meta.lua`, commit, then run
+  `tools/release_reads.sh "What's new"`. It zips the committed plugin, adds its SHA-256 and
+  publishes the GitHub release `blossomreads-vX.Y.Z` that the in-app updater installs.
 
 | Module | Role |
 |---|---|
@@ -337,6 +363,7 @@ for t in core plan engine load; do luajit tests/test_blossomreads_$t.lua; done
 | `blossomreads_login.lua` | Amazon sign-in (two-page flow, code, picture puzzle), session and saved password |
 | `blossomreads_api.lua` | The Goodreads calls: search, shelves, progress, rating, challenge, goal |
 | `blossomreads_review.lua` | Read dates and rereads through the review page (parse, find the save action, save, verify) |
+| `blossomreads_update.lua` | Updates from GitHub releases: check, download, verify, unpack, swap with a backup |
 | `blossomreads_identify.lua` | ISBN / ASIN / file-name parsing and title-and-author scoring |
 | `blossomreads_store.lua` / `_secret.lua` / `_covers.lua` | Files, encryption, cover cache |
 | `blossomreads_view.lua` / `_book.lua` / `_list.lua` / `_theme.lua` | The floating Blossom pages |

@@ -216,6 +216,9 @@ with Goodreads, and every screen floats over your book in Blossom's soft style.
 - **This book, shelves, search and your reading challenge,** as floating Blossom pages. With
   Blossom installed, the yearly goal stays the same in both.
 
+- **Updates itself:** *Check for updates* installs new releases from GitHub, with each download
+  checked first. A daily check asks before installing anything.
+
 **Install:**
 1. Copy `blossomreads.koplugin` into KOReader's `plugins` folder.
 2. Restart KOReader.

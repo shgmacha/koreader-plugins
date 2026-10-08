@@ -81,6 +81,7 @@ local stubs = {
     },
     ["ui/uimanager"] = {
         show = function(_, w) table.insert(shown, w) end,
+        restartKOReader = function() _G.RESTARTED = true end,
         close = function(_, w) table.insert(closed, w) end,
         setDirty = function() end,
         forceRePaint = function() end,
@@ -225,7 +226,8 @@ end
 
 local function reset()
     shown, closed, scheduled = {}, {}, {}
-    G_reader_settings.data = {}
+    -- (automatic update checks are tested on their own)
+    G_reader_settings.data = { blossomreads = { auto_update_check = false } }
     online = true
     sidecars = {}
     on_disk = {}
@@ -392,7 +394,8 @@ test("menu: iCloud-style items, status line and toggles", function()
     end
     eq(texts, { "Sync now", "Last sync: never", "Open Blossom Reads", "This book", "Sync when Wi-Fi connects",
         "Sync on wake", "Sync when closing a book", "Link books automatically", "Sync collections to shelves",
-        "Collections → shelves", "Mark Read at 99%", "Send read dates and rereads", "Sign in to Goodreads", "Remember password" })
+        "Collections → shelves", "Mark Read at 99%", "Send read dates and rereads", "Sign in to Goodreads",
+        "Check for updates (v?)", "Check for updates automatically", "Remember password" })
     eq(items.blossomreads.sorting_hint, "tools")
     local wifi = items.blossomreads.sub_item_table[5]
     eq(wifi.checked_func(), true)
@@ -409,7 +412,7 @@ test("menu: Blossom installed adds the goal toggle (12 items); status after a sy
     local items = {}
     p:addToMainMenu(items)
     local list = items.blossomreads.sub_item_table
-    eq(#list, 15)
+    eq(#list, 17)
     eq(list[13].text, "Share my yearly goal with Blossom")
     assert(list[2].text_func():find("^Last sync: %d%d:%d%d — goal set to 24 ♥$"), list[2].text_func())
     eq(list[14].text_func(), "Signed in as 42")
@@ -1072,6 +1075,156 @@ test("dates: 'Send read dates and rereads' off → no review pages are touched",
     p:runSync{}
     eq(gr.saves, 0)
     for _, l in ipairs(net.log) do assert(not l:find("review/edit"), l) end
+end)
+
+test("finished books: automatic syncs scan the library once a day", function()
+    reset()
+    signIn()
+    readingGoodreads()
+    local root = os.tmpname()
+    os.remove(root)
+    os.execute('mkdir -p "' .. root .. '/Books/Old Stories - Ada Penrose.sdr"')
+    local book = root .. "/Books/Old Stories - Ada Penrose.epub"
+    io.open(book, "w"):close()
+    local meta = io.open(root .. "/Books/Old Stories - Ada Penrose.sdr/metadata.epub.lua", "w")
+    meta:write('return { ["summary"] = { ["status"] = "complete", ["modified"] = "2025-03-01" } }')
+    meta:close()
+    _G.REAL_ROOT = root
+    G_reader_settings.data.home_dir = root .. "/Books"
+    net.routes[GR .. "/book/auto_complete?format=json&q=Old%20Stories"] = { 200, {}, '[{"bookId":901,"bookTitleBare":"Old Stories","author":{"name":"Ada Penrose"}}]' }
+    local p = newPlugin()
+    p:setSetting("last_scan", os.time() - 3600) -- scanned an hour ago
+    eq(p:runSync{ auto = true }.linked, 0)
+    p:setSetting("last_scan", os.time() - 25 * 3600) -- over a day ago
+    eq(p:runSync{ auto = true }.linked, 1)
+    assert(os.time() - p:getSetting("last_scan") < 5)
+    os.execute('rm -rf "' .. root .. '"')
+end)
+
+test("linking: KOReader's own files and non-books in history are never searched", function()
+    reset()
+    signIn()
+    local help = "/mnt/us/koreader/help/quickstart-en-v2025.08.html"
+    local notes = "/mnt/us/Books/notes.json"
+    on_disk[help], on_disk[notes] = true, true
+    history.hist = { { file = help }, { file = notes } }
+    newPlugin():runSync{}
+    for _, l in ipairs(net.log) do assert(not l:find("auto_complete"), l) end
+    eq({ Store.open("books"):get(help), Store.open("books"):get(notes) }, {})
+end)
+
+test("linking: books missed by the older matching get one fresh try", function()
+    reset()
+    signIn()
+    local X = "/mnt/us/Books/Unknown Thing.epub"
+    on_disk[X] = true
+    history.hist = { { file = X } }
+    local store = Store.open("books")
+    store:set(X, { unmatched_at = os.time() - 3600 }) -- recorded by the old version (no unmatched_v)
+    store:flush()
+    net.routes[GR .. "/book/auto_complete?format=json&q=Unknown%20Thing"] = { 200, {}, "[]" }
+    local p = newPlugin()
+    p:runSync{}
+    local tried = false
+    for _, l in ipairs(net.log) do if l:find("auto_complete") then tried = true end end
+    eq({ tried, Store.open("books"):get(X).unmatched_v }, { true, 2 })
+    net.log = {}
+    p:runSync{}
+    for _, l in ipairs(net.log) do assert(not l:find("auto_complete"), l) end
+end)
+
+-- Updates
+local RELEASES_URL = "https://api.github.com/repos/shgmacha/koreader-plugins/releases?per_page=20"
+local function releases(version)
+    return { 200, {}, string.format([[ [{"tag_name":"blossomreads-v%s","draft":false,"prerelease":false,"assets":[
+        {"name":"blossomreads.koplugin.zip","browser_download_url":"https://x/b.zip"}]}] ]], version) }
+end
+
+test("updates: the menu shows this copy's version (from _meta.lua)", function()
+    reset()
+    local p = newPlugin()
+    p.path = "blossomreads.koplugin"
+    local items = {}
+    p:addToMainMenu(items)
+    local found
+    for _, it in ipairs(items.blossomreads.sub_item_table) do
+        if it.text_func and it.text_func():find("^Check for updates %(") then found = it.text_func() end
+    end
+    eq(found, "Check for updates (v1.1.0)")
+end)
+
+test("updates: Check for updates says when you're up to date, or why it couldn't check", function()
+    reset()
+    local p = newPlugin()
+    p._version = "1.1.0"
+    net.routes[RELEASES_URL] = releases("1.1.0")
+    p:checkForUpdates()
+    eq(lastCard(), "You have the latest Blossom Reads (v1.1.0) ♡")
+    online = false
+    p:checkForUpdates()
+    eq(lastCard(), "Couldn't reach GitHub — check Wi-Fi ☆")
+end)
+
+test("updates: a newer release is offered; Update installs it and offers a restart", function()
+    reset()
+    local p = newPlugin()
+    p._version, p.path = "1.1.0", "/plugins/blossomreads.koplugin"
+    net.routes[RELEASES_URL] = releases("1.2.0")
+    local Update = require("blossomreads_update")
+    local real = Update.install
+    local installed
+    Update.install = function(info, dir) installed = { info.version, dir }; return info.version end
+    p:checkForUpdates()
+    local ask = lastShown("ConfirmBox")
+    eq(ask.text, "Blossom Reads v1.2.0 is ready ♡\nYou have v1.1.0. Update now?")
+    ask.ok_callback()
+    Update.install = real
+    eq(installed, { "1.2.0", "/plugins/blossomreads.koplugin" })
+    local restart = lastShown("ConfirmBox")
+    eq(restart.text, "Updated to v1.2.0 ♡\nRestart KOReader now to use it?")
+    _G.RESTARTED = nil
+    restart.ok_callback()
+    eq(_G.RESTARTED, true)
+end)
+
+test("updates: a failed install says why and keeps the current version", function()
+    reset()
+    local p = newPlugin()
+    p._version, p.path = "1.1.0", "/plugins/blossomreads.koplugin"
+    local Update = require("blossomreads_update")
+    local real = Update.install
+    Update.install = function() return nil, "checksum" end
+    p:installUpdate({ version = "1.2.0" })
+    Update.install = real
+    eq(lastCard(), "The download didn't check out, so nothing was changed ☆")
+end)
+
+test("updates: checked automatically once a day on Wi-Fi; only asks, never installs by itself", function()
+    reset()
+    local p = newPlugin()
+    p._version = "1.1.0"
+    p:setSetting("auto_update_check", true)
+    p:setSetting("auto_on_wifi", false)
+    net.routes[RELEASES_URL] = releases("1.2.0")
+    p:onNetworkConnected()
+    runScheduled()
+    eq(lastShown("ConfirmBox").text, "Blossom Reads v1.2.0 is ready ♡\nYou have v1.1.0. Update now?")
+    local n = #shown
+    p:onNetworkConnected() -- same day: no second check
+    eq(#scheduled, 0)
+    p:setSetting("last_update_check", os.time() - 25 * 3600)
+    net.routes[RELEASES_URL] = releases("1.1.0")
+    p:onNetworkConnected()
+    runScheduled()
+    eq(#shown, n) -- up to date: stays quiet
+end)
+
+test("updates: turning automatic checks off stops them", function()
+    reset()
+    local p = newPlugin()
+    p:setSetting("auto_on_wifi", false)
+    p:onNetworkConnected()
+    eq(#scheduled, 0)
 end)
 
 H.done()

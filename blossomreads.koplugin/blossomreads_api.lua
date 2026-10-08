@@ -69,6 +69,7 @@ function Api:search(query)
             out[#out + 1] = {
                 gid = tostring(item.bookId),
                 title = unescape(item.bookTitleBare or item.title),
+                full_title = unescape(item.title), -- with the series, e.g. "Title (Series, #4)"
                 author = type(item.author) == "table" and unescape(item.author.name) or nil,
                 cover = item.imageUrl,
                 pages = tonumber(item.numPages),

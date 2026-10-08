@@ -417,7 +417,7 @@ local Identify = require("blossomreads_identify")
 
 test("identify: ISBN-10/13 from KOReader identifiers, checksums validated", function()
     eq(Identify.fromProps({ title = "Dune", authors = "Frank Herbert\nX", identifiers = "uuid:123\nurn:isbn:978-0-441-17271-9" }, "/b/Dune.epub"),
-        { isbn = "9780441172719", title = "Dune", author = "Frank Herbert" })
+        { isbn = "9780441172719", title = "Dune", author = "Frank Herbert", folder = "b" })
     eq(Identify.fromProps({ identifiers = "ISBN: 0441172717" }).isbn, "9780441172719")
     eq(Identify.fromProps({ identifiers = "isbn:9780441172718" }).isbn, nil) -- bad checksum
 end)
@@ -528,9 +528,9 @@ test("identify: title and author from the Kindle's file names", function()
 end)
 
 test("identify: a never-opened book is described by its file name", function()
-    eq(Identify.fromProps(nil, "/b/(3) Starlit Harbor - Juniper Hale.epub"), { title = "Starlit Harbor", author = "Juniper Hale" })
+    eq(Identify.fromProps(nil, "/b/(3) Starlit Harbor - Juniper Hale.epub"), { title = "Starlit Harbor", author = "Juniper Hale", folder = "b" })
     -- real metadata wins over the file name
-    eq(Identify.fromProps({ title = "Starlit Harbor", authors = "Juniper Hale\nX" }, "/b/whatever.epub"), { title = "Starlit Harbor", author = "Juniper Hale" })
+    eq(Identify.fromProps({ title = "Starlit Harbor", authors = "Juniper Hale\nX" }, "/b/whatever.epub"), { title = "Starlit Harbor", author = "Juniper Hale", folder = "b" })
 end)
 
 test("api: taking a book off a shelf posts a=remove", function()
@@ -677,6 +677,182 @@ test("api: custom status shelves are listed with shelf=, tags with tag=", functi
     a:shelfBooks("on-hold", 1, "tag")
     eq({ log[#log - 1].url, log[#log].url }, { GR .. "/review/list?shelf=paused&per_page=30&page=1&view=table",
         GR .. "/review/list?tag=on-hold&per_page=30&page=1&view=table" })
+end)
+
+test("identify: series-number file names ('6 - Title', '2. Title'); 4-digit titles stay", function()
+    eq({ Identify.fromFileName("/b/Ember Tide/6 - A Lantern in the Tide.epub") }, { "A Lantern in the Tide" })
+    eq({ Identify.fromFileName("/b/2. The Glass Orchard - Ada Penrose.epub") }, { "The Glass Orchard", "Ada Penrose" })
+    eq({ Identify.fromFileName("/b/1984 - Some Author.epub") }, { "1984", "Some Author" })
+end)
+
+test("identify: searches the title alone first (author queries bring study guides)", function()
+    local asked = {}
+    local results = {
+        ["The Glass Orchard Ada Penrose"] = { { gid = "9", title = "Study Guide: The Glass Orchard by Ada Penrose", author = "SuperSummary" } },
+        ["The Glass Orchard"] = { { gid = "1", title = "The Glass Orchard", author = "Ada Penrose" },
+            { gid = "2", title = "The Glass Orchard (Part 1 of 3) [Dramatized Adaptation]", author = "Ada Penrose" } },
+    }
+    local m, how = Identify.match(function(q) asked[#asked + 1] = q; return results[q] or {} end,
+        { title = "The Glass Orchard", author = "Ada Penrose" })
+    eq({ m.gid, how, asked }, { "1", "title", { "The Glass Orchard" } })
+end)
+
+test("identify: falls back to title + author when the title alone isn't enough", function()
+    local results = {
+        ["Ember"] = { { gid = "1", title = "Ember", author = "Someone Else" }, { gid = "2", title = "Ember", author = "Another" } },
+        ["Ember Ada Penrose"] = { { gid = "3", title = "Ember", author = "Ada Penrose" } },
+    }
+    local m, _, ranked = Identify.match(function(q) return results[q] end, { title = "Ember", author = "Ada Penrose" })
+    eq({ m.gid, #ranked }, { "3", 3 })
+end)
+
+test("identify: author unknown → link only Goodreads' top result when it's the one exact title", function()
+    local function s(list) return function() return list end end
+    local want = { title = "A Lantern in the Tide" }
+    eq(Identify.match(s({ { gid = "1", title = "A Lantern in the Tide", author = "Ada Penrose" },
+        { gid = "2", title = "Ember Tide Series 5 Book Set (…A Lantern in the Tide)", author = "Ada Penrose" } }), want).gid, "1")
+    -- two exact titles: ambiguous
+    eq(Identify.match(s({ { gid = "1", title = "A Lantern in the Tide", author = "X" }, { gid = "3", title = "A Lantern in the Tide", author = "Y" } }), want), nil)
+    -- exact title not on top: not sure enough
+    eq(Identify.match(s({ { gid = "4", title = "Lanterns", author = "X" }, { gid = "1", title = "A Lantern in the Tide", author = "Y" } }), want), nil)
+end)
+
+test("identify: a failed title search still tries title + author", function()
+    local m = Identify.match(function(q) if q == "Ember" then return nil, "not_found" end return { { gid = "5", title = "Ember", author = "Ada Penrose" } } end,
+        { title = "Ember", author = "Ada Penrose" })
+    eq(m.gid, "5")
+end)
+
+local Update = require("blossomreads_update")
+-- A stand-in for KOReader's ffi/archiver: the "zip" is a serialized { [path] = content } table.
+local FakeArchiver = { Reader = {} }
+FakeArchiver.Reader.__index = FakeArchiver.Reader
+function FakeArchiver.Reader:new() return setmetatable({}, FakeArchiver.Reader) end
+function FakeArchiver.Reader:open(path)
+    local f = io.open(path, "rb"); if not f then return nil end
+    local chunk = loadstring(f:read("*a")); f:close()
+    if not chunk then return nil end
+    self.files = chunk()
+    return type(self.files) == "table"
+end
+function FakeArchiver.Reader:iterate()
+    local names = {}
+    for k in pairs(self.files) do names[#names + 1] = k end
+    table.sort(names)
+    local i = 0
+    return function() i = i + 1; if names[i] then return { path = names[i], mode = "file" } end end
+end
+function FakeArchiver.Reader:extractToMemory(path) return self.files[path] end
+function FakeArchiver.Reader:close() end
+local function fakeZip(files) return "return " .. Store.serialize(files) end
+local function sha(data) return string.format("%064x", #data) end
+
+local function pluginsDir()
+    local d = os.tmpname(); os.remove(d)
+    os.execute('mkdir -p "' .. d .. '/blossomreads.koplugin"')
+    local f = io.open(d .. "/blossomreads.koplugin/main.lua", "w"); f:write("-- v1.0.0"); f:close()
+    return d
+end
+local function read(p) local f = io.open(p); if not f then return nil end local s = f:read("*a"); f:close(); return s end
+
+local RELEASES = [[ [
+ {"tag_name":"blossomreads-v1.2.0","draft":true,"prerelease":false,"assets":[{"name":"blossomreads.koplugin.zip","browser_download_url":"https://x/draft.zip"}]},
+ {"tag_name":"blossomreads-v1.1.0","draft":false,"prerelease":false,"html_url":"https://github.com/r/1.1.0","body":"Fixes","assets":[
+   {"name":"blossomreads.koplugin.zip","browser_download_url":"https://x/1.1.0.zip"},
+   {"name":"blossomreads.koplugin.zip.sha256","browser_download_url":"https://x/1.1.0.zip.sha256"}]},
+ {"tag_name":"blossom-v3.0.0","draft":false,"prerelease":false,"assets":[{"name":"blossom.koplugin.zip","browser_download_url":"https://x/b.zip"}]},
+ {"tag_name":"blossomreads-v1.3.0-beta","draft":false,"prerelease":true,"assets":[{"name":"blossomreads.koplugin.zip","browser_download_url":"https://x/beta.zip"}]}
+] ]]
+
+test("update: versions compare numerically", function()
+    eq({ Update.newer("1.10.0", "1.9.9"), Update.newer("1.1.0", "1.1.0"), Update.newer("1.0.9", "1.1.0") }, { true, false, false })
+end)
+
+test("update: picks the newest published Blossom Reads release (not drafts, betas or Blossom)", function()
+    local got = Update.check("1.0.0", fakeTransport({ ["https://api.github.com/repos/shgmacha/koreader-plugins/releases?per_page=20"] = { 200, {}, RELEASES } }))
+    eq({ got.version, got.zip_url, got.sha_url, got.notes }, { "1.1.0", "https://x/1.1.0.zip", "https://x/1.1.0.zip.sha256", "Fixes" })
+    eq(Update.check("1.1.0", fakeTransport({ ["https://api.github.com/repos/shgmacha/koreader-plugins/releases?per_page=20"] = { 200, {}, RELEASES } })), nil)
+end)
+
+test("update: GitHub never gets Goodreads cookies; offline is reported", function()
+    local log = {}
+    Update.check("1.0.0", fakeTransport({ ["https://api.github.com/repos/shgmacha/koreader-plugins/releases?per_page=20"] = { 200, {}, "[]" } }, log))
+    eq(log[1].headers.Cookie, nil)
+    eq({ Update.check("1.0.0", fakeTransport({ ["https://api.github.com/repos/shgmacha/koreader-plugins/releases?per_page=20"] = "down" })) }, { nil, "network" })
+end)
+
+test("update: only paths inside blossomreads.koplugin/ are accepted", function()
+    eq({ Update.safePath("blossomreads.koplugin/main.lua"), Update.safePath("blossomreads.koplugin/icons/a.svg"),
+         Update.safePath("../main.lua"), Update.safePath("/etc/x"), Update.safePath("blossomreads.koplugin/../../x"),
+         Update.safePath("other.koplugin/main.lua") }, { true, true, false, false, false, false })
+end)
+
+local INFO = { version = "1.1.0", zip_url = "https://x/1.1.0.zip", sha_url = "https://x/1.1.0.zip.sha256" }
+local GOOD = fakeZip({ ["blossomreads.koplugin/_meta.lua"] = "return { version = \"1.1.0\" }",
+    ["blossomreads.koplugin/main.lua"] = "-- v1.1.0", ["blossomreads.koplugin/icons/heart.svg"] = "<svg/>" })
+
+test("update: installs, keeps the previous version as .old, then cleans it up on start", function()
+    local d = pluginsDir()
+    local plugin = d .. "/blossomreads.koplugin"
+    local t = fakeTransport({ ["https://x/1.1.0.zip"] = { 200, {}, GOOD }, ["https://x/1.1.0.zip.sha256"] = { 200, {}, string.format("%064x", #GOOD) .. "  blossomreads.koplugin.zip\n" } })
+    eq({ Update.install(INFO, plugin, { transport = t, archiver = FakeArchiver, sha256 = sha }) }, { "1.1.0" })
+    eq({ read(plugin .. "/main.lua"), read(plugin .. "/icons/heart.svg"), read(plugin .. ".old/main.lua") }, { "-- v1.1.0", "<svg/>", "-- v1.0.0" })
+    eq(read(d .. "/blossomreads.koplugin.zip.download"), nil)
+    Update.cleanup(plugin)
+    eq(Update.fs.isDir(plugin .. ".old"), false)
+    os.execute('rm -rf "' .. d .. '"')
+end)
+
+test("update: a bad checksum changes nothing", function()
+    local d = pluginsDir()
+    local plugin = d .. "/blossomreads.koplugin"
+    local t = fakeTransport({ ["https://x/1.1.0.zip"] = { 200, {}, GOOD }, ["https://x/1.1.0.zip.sha256"] = { 200, {}, "deadbeef" } })
+    eq({ Update.install(INFO, plugin, { transport = t, archiver = FakeArchiver, sha256 = sha }) }, { nil, "checksum" })
+    eq({ read(plugin .. "/main.lua"), Update.fs.isDir(plugin .. ".new") }, { "-- v1.0.0", false })
+    os.execute('rm -rf "' .. d .. '"')
+end)
+
+test("update: a zip escaping the plugin folder, or an incomplete one, changes nothing", function()
+    local d = pluginsDir()
+    local plugin = d .. "/blossomreads.koplugin"
+    local evil = fakeZip({ ["blossomreads.koplugin/main.lua"] = "x", ["blossomreads.koplugin/../evil.lua"] = "x" })
+    local partial = fakeZip({ ["blossomreads.koplugin/main.lua"] = "x" })
+    for _, case in ipairs({ { evil, "bad_zip" }, { partial, "incomplete" } }) do
+        local t = fakeTransport({ ["https://x/1.1.0.zip"] = { 200, {}, case[1] } })
+        eq({ Update.install({ version = "1.1.0", zip_url = "https://x/1.1.0.zip" }, plugin, { transport = t, archiver = FakeArchiver }) }, { nil, case[2] })
+        eq({ read(plugin .. "/main.lua"), read(d .. "/evil.lua"), Update.fs.isDir(plugin .. ".new") }, { "-- v1.0.0", nil, false })
+    end
+    os.execute('rm -rf "' .. d .. '"')
+end)
+
+test("update: if the new folder can't be moved in, the running version is put back", function()
+    local d = pluginsDir()
+    local plugin = d .. "/blossomreads.koplugin"
+    local fs = setmetatable({ rename = function(a, b)
+        if a:find("%.new$") then return false end
+        return os.rename(a, b)
+    end }, { __index = Update.fs })
+    local t = fakeTransport({ ["https://x/1.1.0.zip"] = { 200, {}, GOOD } })
+    eq({ Update.install({ version = "1.1.0", zip_url = "https://x/1.1.0.zip" }, plugin, { transport = t, archiver = FakeArchiver, fs = fs }) }, { nil, "swap" })
+    eq({ read(plugin .. "/main.lua"), Update.fs.isDir(plugin .. ".old"), Update.fs.isDir(plugin .. ".new") }, { "-- v1.0.0", false, false })
+    os.execute('rm -rf "' .. d .. '"')
+end)
+
+test("update: a failed download changes nothing", function()
+    local d = pluginsDir()
+    local plugin = d .. "/blossomreads.koplugin"
+    eq({ Update.install(INFO, plugin, { transport = fakeTransport({ ["https://x/1.1.0.zip"] = "down" }), archiver = FakeArchiver }) }, { nil, "network" })
+    eq(read(plugin .. "/main.lua"), "-- v1.0.0")
+    os.execute('rm -rf "' .. d .. '"')
+end)
+
+test("identify: same-title books are told apart by the series in the book's folder", function()
+    local hits = { { gid = "1", title = "Queen of Lanterns", full_title = "Queen of Lanterns (Glass Crown, #4)", author = "Ada Penrose" },
+        { gid = "2", title = "Queen of Lanterns", full_title = "Queen of Lanterns", author = "Someone Else" } }
+    local want = Identify.fromProps(nil, "/mnt/us/Books/Glass Crown/Queen of Lanterns.epub")
+    eq({ want.folder, Identify.match(function() return hits end, want).gid }, { "Glass Crown", "1" })
+    -- folder isn't the series: still not sure
+    eq(Identify.match(function() return hits end, Identify.fromProps(nil, "/mnt/us/Books/Queen of Lanterns.epub")), nil)
 end)
 
 H.done()
