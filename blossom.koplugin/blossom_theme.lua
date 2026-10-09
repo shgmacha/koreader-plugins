@@ -69,6 +69,11 @@ function Theme.face(kind, size)
     return faces[key]
 end
 
+--- Forget cached faces (tests use it to simulate another screen).
+function Theme.clearFaceCache()
+    faces = {}
+end
+
 --- Rounded soft card.
 function Theme.card(widget, opts)
     opts = opts or {}
@@ -407,6 +412,19 @@ end
 --- Shows a page in its place (full screen, or centred as a window).
 function Theme.showPage(page)
     require("ui/uimanager"):show(page, "flashui", nil, page.geom.x, page.geom.y)
+end
+
+--- A scroll area that only takes up/down swipes, so left/right still reach the page (e.g. "back").
+function Theme.verticalScroll(opts)
+    local ScrollableContainer = require("ui/widget/container/scrollablecontainer")
+    local scroll = ScrollableContainer:new(opts)
+    local swipe = scroll.onScrollableSwipe
+    scroll.onScrollableSwipe = function(self, arg, ges)
+        local dir = ges and ges.direction
+        if dir == "east" or dir == "west" then return false end
+        return swipe(self, arg, ges)
+    end
+    return scroll
 end
 
 --- Width left for content inside a default Theme.card.

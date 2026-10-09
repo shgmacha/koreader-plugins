@@ -92,7 +92,7 @@ function BlossomMore:makeRow(item, avail_h)
     local row = self:quoteRow(item)
     if avail_h and row:getSize().h > avail_h then
         row:free()
-        row = self:quoteRow(item, math.max(2, math.floor((avail_h - px(70)) / (15 * 1.45))))
+        row = self:quoteRow(item, math.max(2, math.floor((avail_h - px(70)) / (Theme.face("script", 15).size * 1.45))))
     end
     return row
 end

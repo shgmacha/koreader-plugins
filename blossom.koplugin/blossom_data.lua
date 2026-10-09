@@ -457,7 +457,9 @@ function Data.annotations(books, date)
     local result = { highlights = {}, bookmarks = {} }
     local function add(book, a, is_highlight, quote, note)
         local when = a.datetime
-        if type(when) ~= "string" or (date and when:sub(1, 10) ~= date) then return end
+        -- a well-formed "YYYY-MM-DD hh:mm…" date only (a hand-edited sidecar mustn't stop Blossom)
+        if type(when) ~= "string" or not when:match("^%d%d%d%d%-%d%d%-%d%d") then return end
+        if date and when:sub(1, 10) ~= date then return end
         local item = {
             kind = is_highlight and "highlight" or "bookmark",
             title = book.title or "Untitled",
@@ -479,8 +481,13 @@ function Data.annotations(books, date)
             end
         elseif type(book.bookmarks) == "table" then
             for _, bm in ipairs(book.bookmarks) do
-                -- Old format: highlighted text lived in `notes`, the user's note in `text`.
-                add(book, bm, bm.highlighted == true, bm.highlighted and bm.notes or nil, bm.highlighted and bm.text or nil)
+                -- Old format: highlighted text lived in `notes`, the user's note in `text` —
+                -- unless `text` is KOReader's automatic "Page N <quote> @ <date>" (or a copy of the quote).
+                local note = bm.highlighted and bm.text or nil
+                if note and (note == "" or note == bm.notes or note:match("^Page .- @ %d%d%d%d%-%d%d%-%d%d")) then
+                    note = nil
+                end
+                add(book, bm, bm.highlighted == true, bm.highlighted and bm.notes or nil, note)
             end
         end
     end
@@ -512,10 +519,17 @@ function Data.snippet(description, max_chars)
     if s == "" then return end
     max_chars = max_chars or 220
     if #s > max_chars then
-        -- cut at a word boundary, and never inside a UTF-8 character
-        local cut = s:sub(1, max_chars):match("^(.*) ") or s:sub(1, max_chars)
-        while #cut > 0 and cut:byte(-1) >= 0x80 and cut:byte(-1) < 0xC0 do cut = cut:sub(1, -2) end
-        if #cut > 0 and cut:byte(-1) >= 0xC0 then cut = cut:sub(1, -2) end
+        -- cut at a word boundary (whole characters by definition); only a cut in the middle of a
+        -- long word may end inside a UTF-8 character, and only then is the broken tail dropped
+        local cut = s:sub(1, max_chars):match("^(.*) ")
+        if not cut then
+            cut = s:sub(1, max_chars)
+            local i = #cut
+            while i > 0 and cut:byte(i) >= 0x80 and cut:byte(i) < 0xC0 do i = i - 1 end
+            local lead = cut:byte(i)
+            local need = lead and (lead >= 0xF0 and 4 or lead >= 0xE0 and 3 or lead >= 0xC0 and 2 or 1) or 1
+            if i > 0 and #cut - i + 1 < need then cut = cut:sub(1, i - 1) end
+        end
         s = cut:gsub("[%s,;:%.]+$", "") .. "…"
     end
     return s

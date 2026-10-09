@@ -6,8 +6,12 @@ overview, a weekly bloom chart, recent-book progress and a monthly shelf of
 covers in a soft, grayscale-friendly style.
 --]]
 
+local ConfirmBox = require("ui/widget/confirmbox")
 local DataStorage = require("datastorage")
 local Dispatcher = require("dispatcher")
+local InfoMessage = require("ui/widget/infomessage")
+local NetworkMgr = require("ui/network/manager")
+local Notification = require("ui/widget/notification")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local lfs = require("libs/libkoreader-lfs")
@@ -18,6 +22,7 @@ local _ = require("gettext")
 local BlossomView = require("blossom_view")
 local Covers = require("blossom_covers")
 local Data = require("blossom_data")
+local Update = require("blossom_update")
 local Theme = require("blossom_theme")
 
 local RECENT_BOOKS = 8
@@ -102,6 +107,151 @@ function Blossom:init()
     self.db_path = DataStorage:getSettingsDir() .. "/statistics.sqlite3"
     self:onDispatcherRegisterActions()
     self.ui.menu:registerToMainMenu(self)
+    self:cleanupUpdate()
+end
+
+-- Updates ---------------------------------------------------------------------
+
+-- Releases are tagged "blossom-vX.Y.Z" (Blossom Reads uses "blossomreads-v", never mixed up).
+local RELEASE_PREFIX = "blossom"
+
+--- This copy's version. KOReader copies _meta.lua's fields onto the plugin (so `self.version`
+--- is a string, not a method); read _meta.lua ourselves only if that didn't happen.
+function Blossom:currentVersion()
+    if type(self.version) == "string" then return self.version end
+    if not self._version then
+        local ok, meta = pcall(dofile, (self.path or ".") .. "/_meta.lua")
+        self._version = ok and type(meta) == "table" and meta.version or "0"
+    end
+    return self._version
+end
+
+--- The plugin's folder name (usually blossom.koplugin), whatever KOReader loaded.
+function Blossom:folderName()
+    return self.path and self.path:match("([^/]+)/?$")
+end
+
+function Blossom:updateIO()
+    self._update_io = self._update_io or Update.kindleIO()
+    return self._update_io
+end
+
+--- Removes the backup / half-done folders an earlier update left behind.
+function Blossom:cleanupUpdate()
+    if not self.path then return end
+    local ok, err = pcall(Update.cleanup, self:updateIO(), self.path, self:folderName())
+    if not ok then logger.warn("Blossom: update cleanup failed", err) end
+end
+
+--- "Check for updates": asks for Wi-Fi when needed, then checks and offers to install.
+function Blossom:checkForUpdates()
+    NetworkMgr:runWhenOnline(function() self:checkUpdatesNow(true) end)
+end
+
+--- Checks GitHub. Interactive: says what it found. Quiet: only a small note when there's an update.
+function Blossom:checkUpdatesNow(interactive)
+    local looking
+    if interactive then
+        looking = InfoMessage:new{ text = _("Looking for updates… ❀") }
+        UIManager:show(looking)
+        UIManager:forceRePaint()
+    end
+    local ok, result, err = pcall(Update.check, self:updateIO(), RELEASE_PREFIX, self:currentVersion())
+    if looking then UIManager:close(looking) end
+    if not ok then result, err = nil, result end
+    self:setSetting("last_update_check", os.time())
+    if not result then
+        logger.warn("Blossom: update check failed", err)
+        if interactive then
+            UIManager:show(InfoMessage:new{ text = T(_("Couldn't reach GitHub to check for updates.\n(%1)"), tostring(err)) })
+        end
+        return
+    end
+    if not result.newer then
+        self:setSetting("update_available", nil)
+        if interactive then
+            UIManager:show(InfoMessage:new{ text = T(_("You have the latest Blossom (v%1) ♡"), self:currentVersion()) })
+        end
+        return
+    end
+    self:setSetting("update_available", result.version)
+    if interactive then
+        self:confirmUpdate(result)
+    else
+        Notification:notify(T(_("Blossom v%1 is ready to bloom — Tools → Blossom → Check for updates"), result.version))
+    end
+    return result
+end
+
+function Blossom:confirmUpdate(result)
+    local notes = type(result.release.body) == "string" and result.release.body or ""
+    notes = notes:gsub("\r", ""):gsub("%s+$", "")
+    if #notes > 600 then notes = notes:sub(1, 600):gsub("[\128-\191]*$", "") .. "…" end
+    UIManager:show(ConfirmBox:new{
+        text = T(_("Blossom v%1 is ready ❀ (you have v%2)"), result.version, self:currentVersion())
+            .. (notes ~= "" and ("\n\n" .. notes) or "") .. "\n\n" .. _("Update now?"),
+        ok_text = _("Update ♥"),
+        ok_callback = function() self:installUpdate(result) end,
+    })
+end
+
+local INSTALL_ERRORS = {
+    no_asset = _("This release has no Blossom download."),
+    download = _("The download didn't finish. Please try again on Wi-Fi."),
+    checksum = _("The download looks damaged, so nothing was changed."),
+    bad_zip = _("The download isn't a complete Blossom, so nothing was changed."),
+    not_writable = _("Blossom's folder can't be changed (is the storage read-only?)."),
+    swap = _("The update couldn't be put in place; your current Blossom was kept."),
+}
+
+function Blossom:installUpdate(result)
+    if not self.path then
+        UIManager:show(InfoMessage:new{ text = _("Couldn't find Blossom's folder, so it can't update itself.") })
+        return
+    end
+    local planting = InfoMessage:new{ text = _("Planting the update… ❀") }
+    UIManager:show(planting)
+    UIManager:forceRePaint()
+    local ok, installed, reason, detail = pcall(Update.install, self:updateIO(), {
+        name = self:folderName(),
+        plugin_dir = self.path,
+        work_dir = DataStorage:getSettingsDir() .. "/blossom/update",
+        release = result.release,
+        version = result.version,
+    })
+    UIManager:close(planting)
+    if not ok then installed, reason, detail = nil, "swap", installed end
+    if not installed then
+        logger.warn("Blossom: update failed", reason, detail)
+        UIManager:show(InfoMessage:new{ text = INSTALL_ERRORS[reason] or tostring(reason) })
+        return
+    end
+    self:setSetting("update_available", nil)
+    UIManager:show(ConfirmBox:new{
+        text = T(_("Blossom is now v%1 ❀\nRestart KOReader to see what's new?"), result.version),
+        ok_text = _("Restart"),
+        cancel_text = _("Later"),
+        ok_callback = function() UIManager:restartKOReader() end,
+    })
+end
+
+--- At most once a day, on Wi-Fi only, never installs: just a small note when there's an update.
+function Blossom:maybeQuietUpdateCheck()
+    -- (the flag lives on the class, so the bookshelf and reader instances share it)
+    if self:getSetting("update_auto") == false or Blossom.quiet_check_scheduled then return end
+    if not NetworkMgr:isConnected() then return end
+    local last = tonumber(self:getSetting("last_update_check")) or 0
+    if os.time() - last < Update.DAY then return end
+    Blossom.quiet_check_scheduled = true
+    UIManager:scheduleIn(5, function()
+        Blossom.quiet_check_scheduled = false
+        local ok, err = pcall(self.checkUpdatesNow, self, false)
+        if not ok then logger.warn("Blossom: quiet update check failed", err) end
+    end)
+end
+
+function Blossom:onNetworkConnected()
+    self:maybeQuietUpdateCheck()
 end
 
 function Blossom:onDispatcherRegisterActions()
@@ -176,6 +326,22 @@ function Blossom:addToMainMenu(menu_items)
                 callback = function(touchmenu_instance)
                     self:editGoalFromMenu(touchmenu_instance)
                 end,
+                separator = true,
+            },
+            {
+                text_func = function()
+                    local newer = self:getSetting("update_available")
+                    if newer and Update.compareVersions(newer, self:currentVersion()) > 0 then
+                        return T(_("Update to v%1 ❀"), newer)
+                    end
+                    return T(_("Check for updates (v%1)"), self:currentVersion())
+                end,
+                callback = function() self:checkForUpdates() end,
+            },
+            {
+                text = _("Check for updates automatically"),
+                checked_func = function() return self:getSetting("update_auto") ~= false end,
+                callback = function() self:setSetting("update_auto", self:getSetting("update_auto") == false) end,
             },
         },
     }
@@ -256,10 +422,11 @@ function Blossom:withDB(fn)
 end
 
 --- conn:exec returns columns (res[col][row]) with int64 cdata numbers; turn into row tables.
-local function rows(res, fields)
+--- `n` is the row count conn:exec returns: a NULL in the first column leaves a hole, so #res[1] can't be trusted.
+local function rows(res, fields, n)
     local out = {}
     if not res or not res[1] then return out end
-    for i = 1, #res[1] do
+    for i = 1, tonumber(n) or #res[1] do
         local row = {}
         for c, name in ipairs(fields) do
             local v = res[c][i]
@@ -271,6 +438,12 @@ local function rows(res, fields)
     return out
 end
 Blossom.rows = rows
+
+--- Runs one SELECT and returns its rows as tables named by `fields`.
+local function query(conn, sql, fields)
+    local res, n = conn:exec(sql)
+    return rows(res, fields, n)
+end
 
 -- Each query is isolated so one failure only empties its own section.
 local function try(conn, fn)
@@ -287,10 +460,10 @@ function Blossom:loadRaw()
             return { books = tonumber(books), seconds = tonumber(seconds), pages = tonumber(pages) }
         end)
         raw.days = try(conn, function(c)
-            return rows(c:exec(SQL_DAYS), { "date", "seconds" })
+            return query(c, SQL_DAYS, { "date", "seconds" })
         end)
         raw.books = try(conn, function(c)
-            return rows(c:exec(string.format(SQL_RECENT, RECENT_BOOKS)),
+            return query(c, string.format(SQL_RECENT, RECENT_BOOKS),
                 { "id", "title", "authors", "md5", "pages", "read_pages", "seconds" })
         end)
         return raw
@@ -299,7 +472,7 @@ end
 
 function Blossom:loadPeriod(start_time, end_time)
     local result = self:withDB(function(conn)
-        local list = rows(conn:exec(string.format(SQL_PERIOD_BOOKS, start_time, end_time)),
+        local list = query(conn, string.format(SQL_PERIOD_BOOKS, start_time, end_time),
             { "id", "title", "authors", "md5", "pages", "read_pages", "seconds", "period_pages" })
         local days = conn:rowexec(string.format(SQL_PERIOD_DAYS, start_time, end_time))
         return { list = list, days = tonumber(days) }
@@ -312,7 +485,7 @@ function Blossom:loadMonth(y, m)
     local start_time, end_time = Data.monthBounds(y, m)
     local month = self:loadPeriod(start_time, end_time)
     local day_rows = self:withDB(function(conn)
-        return rows(conn:exec(string.format(SQL_DAY_BOOKS, start_time, end_time)),
+        return query(conn, string.format(SQL_DAY_BOOKS, start_time, end_time),
             { "date", "id", "md5", "title", "seconds" })
     end)
     month.top_by_date = Data.topBookPerDay(day_rows)
@@ -324,7 +497,7 @@ function Blossom:loadBook(id)
     id = tonumber(id)
     if not id then return end
     local row = self:withDB(function(conn)
-        return rows(conn:exec(string.format(SQL_BOOK, id)), { "id", "title", "authors", "md5", "pages",
+        return query(conn, string.format(SQL_BOOK, id), { "id", "title", "authors", "md5", "pages",
             "read_pages", "seconds", "highlights", "notes", "first", "last", "days" })[1]
     end)
     if not row then return end
@@ -365,9 +538,9 @@ function Blossom:loadYear(y)
     local start_time, end_time = Data.yearBounds(y)
     local raw = self:withDB(function(conn)
         return {
-            finished_rows = rows(conn:exec(string.format(SQL_YEAR_FINISHED, start_time, end_time)),
+            finished_rows = query(conn, string.format(SQL_YEAR_FINISHED, start_time, end_time),
                 { "pages", "read_pages", "last" }),
-            months = rows(conn:exec(string.format(SQL_YEAR_MONTHS, start_time, end_time)),
+            months = query(conn, string.format(SQL_YEAR_MONTHS, start_time, end_time),
                 { "month", "seconds", "pages" }),
             days = tonumber(conn:rowexec(string.format(SQL_PERIOD_DAYS, start_time, end_time))),
         }
@@ -391,7 +564,7 @@ end
 --- Every book read, ordered "recent", "time" or "pages".
 function Blossom:loadBooks(order)
     local list = self:withDB(function(conn)
-        return rows(conn:exec(string.format(SQL_ALL_BOOKS, BOOK_ORDERS[order] or BOOK_ORDERS.recent)),
+        return query(conn, string.format(SQL_ALL_BOOKS, BOOK_ORDERS[order] or BOOK_ORDERS.recent),
             { "id", "title", "authors", "md5", "pages", "read_pages", "seconds" })
     end) or {}
     local books = {}
@@ -494,6 +667,7 @@ function Blossom:show(opts)
         setGoal = function(goal) self:setGoal(goal) end,
     }
     Theme.showPage(view)
+    self:maybeQuietUpdateCheck()
     -- "This book in Blossom", or starting on the book being read: its details on top of the diary.
     if opts.book or start == "current_book" then
         local id = self:currentBookId()

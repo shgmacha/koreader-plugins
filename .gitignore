@@ -3,3 +3,4 @@
 screenshots-local/
 __pycache__/
 tasks/
+dist/

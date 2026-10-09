@@ -344,4 +344,28 @@ test("streakRange ends today when read today, else yesterday", function()
     eq(Data.streakRange({}, "2026-09-30", 0), nil)
 end)
 
+test("review fixes: snippet keeps whole characters, old auto notes, bad dates", function()
+    -- a word-boundary cut keeps "café" whole; a cut mid-word drops only a broken character
+    eq(Data.snippet("un café ok et plus encore", 9), "un café…")
+    eq(Data.snippet("un café ok et plus encore", 12), "un café ok…")
+    local long = string.rep("é", 30)
+    local s = Data.snippet(long, 21)
+    assert(s:match("^[é]+…$"), s)
+    -- old sidecars: KOReader's automatic "Page N … @ date" text isn't the reader's note
+    local r = Data.annotations({ { title = "t", bookmarks = {
+        { datetime = "2023-05-01 10:00:00", highlighted = true, notes = "It was dark", text = "Page 12 It was dark @ 2023-05-01 10:00:00", page = 12 },
+        { datetime = "2023-05-02 10:00:00", highlighted = true, notes = "Same", text = "Same", page = 13 },
+        { datetime = "2023-05-03 10:00:00", highlighted = true, notes = "Mine", text = "a real note", page = 14 },
+    } } })
+    eq({ r.highlights[1].note, r.highlights[2].note, r.highlights[3].note }, { nil, nil, "a real note" })
+    -- a malformed date is skipped instead of stopping Blossom
+    r = Data.annotations({ { title = "t", annotations = {
+        { datetime = "", drawer = "x", text = "bad" },
+        { datetime = "yesterday", drawer = "x", text = "bad too" },
+        { datetime = "2026-09-01 10:00:00", drawer = "x", text = "good" },
+    } } })
+    eq(#r.highlights, 1)
+    eq(r.highlights[1].text, "good")
+end)
+
 H.done()

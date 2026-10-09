@@ -604,8 +604,18 @@ function BlossomView:build_overview()
         text(string.format(_("longest streak: %d days %s"), s.longest_streak, Theme.star),
             Theme.face("script", 15), { color = Theme.soft_ink }),
     }
-    -- The garden centred in the page, the flower bed along the very bottom.
-    local bed = Theme.icon("garden_bed", bed_w, floor(bed_w * 90 / 600), true)
+    -- The garden centred in the page, the flower bed along the very bottom — when there's room for
+    -- both (in landscape or the floating window the bed is left out rather than overlap the garden).
+    local bed_h = floor(bed_w * 90 / 600)
+    local garden_h = garden:getSize().h
+    garden:resetLayout()
+    if self.content_h - bed_h < garden_h then
+        return CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = self.content_h },
+            garden,
+        }
+    end
+    local bed = Theme.icon("garden_bed", bed_w, bed_h, true)
     return VerticalGroup:new{
         align = "center",
         CenterContainer:new{
@@ -1068,7 +1078,7 @@ end
 function BlossomView:monthChart(year, chart_h)
     local values = {}
     for i, m in ipairs(year.months) do values[i] = m.seconds end
-    local upto = self.year == self.this_year and self.this_month or 12
+    local upto = self.this_month -- My year always shows this year (self.year is the month page's)
     local chart = LineChart:new{ width = self.inner_w, height = chart_h, values = values, upto = upto,
                                  best = year.best_month, top_pad = px(26) }
     local overlay = OverlapGroup:new{ dimen = Geom:new{ w = self.inner_w, h = chart_h }, chart }

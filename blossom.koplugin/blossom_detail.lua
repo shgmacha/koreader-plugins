@@ -169,7 +169,7 @@ function BlossomDetail:build()
     if content:getSize().h > avail then
         content:resetLayout()
         local scroll_w = ScrollableContainer:getScrollbarWidth()
-        self.cropping_widget = ScrollableContainer:new{
+        self.cropping_widget = Theme.verticalScroll{
             dimen = Geom:new{ w = self.inner_w + scroll_w + px(8), h = avail },
             show_parent = self,
             content,

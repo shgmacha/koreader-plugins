@@ -8,10 +8,10 @@ APP="${1:-$HOME/Applications/KOReader.app}"
 DEMO="${TMPDIR:-/tmp}/blossom-demo"
 OUT="$ROOT/docs/screenshots"
 
-python3 "$ROOT/tools/make_demo.py" "$DEMO"
+"${PYTHON:-python3}" "$ROOT/tools/make_demo.py" "$DEMO"
 mkdir -p "$DEMO/home/patches" "$OUT"
 cp "$ROOT/tools/screenshot_patch.lua" "$DEMO/home/patches/2-blossom-shots.lua"
-rm -f "$OUT"/*.png
+rm -f "$OUT"/[0-9]*.png  # only Blossom's numbered shots; Blossom Reads' r*.png live here too
 
 cd "$APP/Contents/koreader"
 KO_HOME="$DEMO/home" BLOSSOM_SHOTS="$OUT" EMULATE_READER_W=758 EMULATE_READER_H=1024 EMULATE_READER_DPI=212 \

@@ -63,6 +63,7 @@ local function fakeBB(w, h, extra)
 end
 
 local shown, closed, dirty = {}, {}, {}
+local scheduled, notes, net, restarted = {}, {}, { connected = true }, false
 local dispatched
 local fs = {}          -- path -> true for files that "exist"
 local db = {}          -- fake database behaviour
@@ -99,7 +100,14 @@ local stubs = {
         close = function(_, w) table.insert(closed, w) end,
         setDirty = function(_, w, mode) table.insert(dirty, mode) end,
         forceRePaint = function() end,
+        scheduleIn = function(_, _s, fn) table.insert(scheduled, fn) end,
+        restartKOReader = function() restarted = true end,
     },
+    ["ui/network/manager"] = {
+        isConnected = function() return net.connected end,
+        runWhenOnline = function(_, fn) net.asked = (net.asked or 0) + 1; if net.connected then fn() end end,
+    },
+    ["ui/widget/notification"] = { notify = function(_, text) table.insert(notes, text) end },
     ["gettext"] = setmetatable({}, { __call = function(_, s) return s end }),
     ["logger"] = { warn = function() end, dbg = function() end },
     ["datastorage"] = { getSettingsDir = function() return settings_dir end },
@@ -166,14 +174,17 @@ for _, name in ipairs({
     "ui/widget/textwidget", "ui/widget/verticalgroup", "ui/widget/verticalspan", "ui/widget/widget",
     "ui/widget/container/widgetcontainer", "ui/widget/container/leftcontainer", "ui/widget/rectspan",
     "ui/widget/linewidget", "ui/widget/container/scrollablecontainer", "ui/widget/spinwidget",
+    "ui/widget/confirmbox",
 }) do
     stubs[name] = class(name:match("([^/]+)$"):gsub("^%l", string.upper)
         :gsub("group$", "Group"):gsub("widget$", "Widget"):gsub("span$", "Span"))
 end
 stubs["ui/widget/infomessage"].kind = "InfoMessage"
 stubs["ui/widget/spinwidget"].kind = "SpinWidget"
+stubs["ui/widget/confirmbox"].kind = "ConfirmBox"
 stubs["ui/widget/container/scrollablecontainer"].kind = "ScrollableContainer"
 stubs["ui/widget/container/scrollablecontainer"].getScrollbarWidth = function() return 6 end
+stubs["ui/widget/container/scrollablecontainer"].onScrollableSwipe = function() return true end
 
 _G.G_reader_settings = {
     data = {},
@@ -301,6 +312,8 @@ local function bows(w)
 end
 
 local Blossom = require("main")
+-- Like KOReader's PluginLoader: every _meta.lua field is copied onto the plugin module.
+for k, v in pairs(dofile("blossom.koplugin/_meta.lua")) do Blossom[k] = v end
 local BlossomView = require("blossom_view")
 local Covers = require("blossom_covers")
 
@@ -1656,6 +1669,233 @@ test("highlights lists show the whole highlight, not a cut-off one", function()
         eq(box.text, long:gsub("%s+$", "")) -- every word
         eq(box.height, nil)                  -- no height cap, no ellipsis
     end
+end)
+
+-- Updates ------------------------------------------------------------------------
+local Update = require("blossom_update")
+
+-- A plugin whose updater talks to a fake GitHub / disk.
+local function updatablePlugin(releases, install_result)
+    local p = newPlugin()
+    p.path = "/kindle/koreader/plugins/blossom.koplugin"
+    p.version = "1.0.0" -- as KOReader's loader copies it from _meta.lua
+    p.calls = { checks = 0, installs = {} }
+    p._update_io = {
+        getJSON = function() p.calls.checks = p.calls.checks + 1; if releases == "offline" then return nil, "network" end return releases end,
+        purge = function() end,
+    }
+    p._fake_install = install_result
+    return p
+end
+
+local real_install = Update.install
+Update.install = function(io, opts)
+    local p = io._plugin
+    if p then
+        table.insert(p.calls.installs, opts)
+        return p._fake_install[1], p._fake_install[2]
+    end
+    return real_install(io, opts)
+end
+
+local function resetUpdate()
+    resetDB()
+    Blossom.quiet_check_scheduled = false
+    scheduled, notes, restarted = {}, {}, false
+    net.connected, net.asked = true, nil
+end
+
+local REL = { { tag_name = "blossom-v1.1.0", body = "Cute fixes ♡", assets = { { name = "blossom.koplugin.zip", browser_download_url = "u" } } },
+              { tag_name = "blossomreads-v9.9.9" } }
+
+test("update menu: check button shows the version, auto-check toggle persists", function()
+    resetUpdate()
+    local p = updatablePlugin(REL)
+    local m = menu(p)
+    eq(m["Check for updates (v1.0.0)"] ~= nil, true)
+    local toggle = m["Check for updates automatically"]
+    eq(toggle.checked_func(), true)
+    toggle.callback()
+    eq({ toggle.checked_func(), G_reader_settings.data.blossom.update_auto }, { false, false })
+    toggle.callback()
+    eq(toggle.checked_func(), true)
+    -- once an update is known, the button says so
+    p:setSetting("update_available", "1.1.0")
+    eq(menu(p)["Update to v1.1.0 ❀"] ~= nil, true)
+end)
+
+test("check for updates: up to date, offline, newer → confirm → install → restart", function()
+    resetUpdate()
+    local p = updatablePlugin({ { tag_name = "blossom-v1.0.0" } })
+    p:checkForUpdates()
+    eq(lastOfKind("InfoMessage").text, "You have the latest Blossom (v1.0.0) ♡")
+    assert(G_reader_settings.data.blossom.last_update_check)
+
+    p = updatablePlugin("offline")
+    p:checkForUpdates()
+    assert(lastOfKind("InfoMessage").text:find("Couldn't reach GitHub"), lastOfKind("InfoMessage").text)
+
+    net.connected, net.asked = false, 0
+    p = updatablePlugin(REL)
+    p:checkForUpdates()
+    eq({ net.asked, p.calls.checks }, { 1, 0 }) -- asks for Wi-Fi first, doesn't check offline
+
+    net.connected = true
+    p = updatablePlugin(REL, { true })
+    p._update_io._plugin = p
+    p:checkForUpdates()
+    local confirm = lastOfKind("ConfirmBox")
+    assert(confirm.text:find("Blossom v1.1.0 is ready") and confirm.text:find("Cute fixes"), confirm.text)
+    eq(G_reader_settings.data.blossom.update_available, "1.1.0")
+    confirm.ok_callback()
+    local opts = p.calls.installs[1]
+    eq({ opts.name, opts.plugin_dir, opts.version }, { "blossom.koplugin", p.path, "1.1.0" })
+    local restart = lastOfKind("ConfirmBox")
+    assert(restart.text:find("Blossom is now v1.1.0"), restart.text)
+    eq(G_reader_settings.data.blossom.update_available, nil)
+    restart.ok_callback()
+    eq(restarted, true)
+end)
+
+test("a failed install explains why and keeps the current Blossom", function()
+    resetUpdate()
+    local p = updatablePlugin(REL, { nil, "checksum" })
+    p._update_io._plugin = p
+    p:checkForUpdates()
+    lastOfKind("ConfirmBox").ok_callback()
+    eq(lastOfKind("InfoMessage").text, "The download looks damaged, so nothing was changed.")
+    eq(restarted, false)
+end)
+
+test("quiet check: once a day, Wi-Fi only, can be turned off, only a note", function()
+    resetUpdate()
+    local p = updatablePlugin(REL)
+    p:onNetworkConnected()
+    eq(#scheduled, 1)
+    scheduled[1]()
+    eq(p.calls.checks, 1)
+    assert(notes[1] and notes[1]:find("Blossom v1.1.0 is ready to bloom"), notes[1])
+    eq(lastOfKind("ConfirmBox"), nil) -- never asks or installs on its own
+    -- within a day: no second check
+    p:onNetworkConnected()
+    eq(#scheduled, 1)
+    -- a day later: checks again
+    G_reader_settings.data.blossom.last_update_check = os.time() - Update.DAY - 1
+    p:onNetworkConnected()
+    eq(#scheduled, 2)
+    scheduled[2]()
+    -- offline: nothing
+    G_reader_settings.data.blossom.last_update_check = 0
+    net.connected = false
+    p:onNetworkConnected()
+    eq(#scheduled, 2)
+    -- turned off: nothing
+    net.connected = true
+    p:setSetting("update_auto", false)
+    p:onNetworkConnected()
+    eq(#scheduled, 2)
+    -- quiet failures stay quiet
+    p = updatablePlugin("offline")
+    G_reader_settings.data.blossom = {}
+    shown = {}
+    p:onNetworkConnected()
+    scheduled[#scheduled]()
+    eq(lastOfKind("InfoMessage"), nil)
+end)
+
+test("opening Blossom online also runs the daily quiet check", function()
+    resetUpdate()
+    local p = updatablePlugin(REL)
+    p:show()
+    eq(#scheduled, 1)
+    scheduled[1]()
+    eq(p.calls.checks, 1)
+    p:show()
+    eq(#scheduled, 1) -- not again the same day
+end)
+
+test("startup cleans leftovers from an earlier update", function()
+    resetUpdate()
+    local purged = {}
+    local p = newPlugin()
+    p.path = "/kindle/koreader/plugins/blossom.koplugin"
+    p._update_io = { purge = function(path) table.insert(purged, path) end }
+    p:cleanupUpdate()
+    eq(purged, { "/kindle/koreader/plugins/blossom.koplugin.old", "/kindle/koreader/plugins/blossom.koplugin.new" })
+end)
+
+test("review fix: rows() uses the real row count when the first column has NULLs", function()
+    local res = { { 100, nil, 300, nil }, { 1, 2, 3, 4 } } -- pages (NULL in rows 2 and 4), read_pages
+    local out = Blossom.rows(res, { "pages", "read" }, 4)
+    eq(#out, 4)
+    eq({ out[2].pages, out[2].read, out[4].read }, { nil, 2, 4 })
+end)
+
+test("review fix: My year shows this year's months even after paging back on This month", function()
+    resetDB()
+    local view = openView()
+    view:goToPage(4)
+    view:shiftMonth(-10) -- back into last year
+    view:goToPage(5)
+    local chart
+    walk(view, function(n) if getmetatable(n) == BlossomView.LineChart then chart = n end end)
+    eq(chart.upto, tonumber(os.date("%m")))
+end)
+
+test("review fix: left/right swipes on a scrolling book page still go back", function()
+    resetDB()
+    db.book = function()
+        return cols({ { 1, "Anathema", "Keri Lake", "md5:/books/a.epub", 300, 100, 5400, 2, 0, os.time() - 86400, os.time(), 3 } })
+    end
+    local many = {}
+    for i = 1, 25 do many[i] = { datetime = string.format("2026-08-%02d 10:00:00", i), drawer = "lighten", text = "quote " .. i } end
+    db.sidecar = { ["/books/a.epub"] = { annotations = many } }
+    local view = openView()
+    view:openBook(1)
+    local scroll = shown[#shown].cropping_widget
+    eq(scroll:onScrollableSwipe(nil, { direction = "east" }), false) -- left for the page ("back")
+    eq(scroll:onScrollableSwipe(nil, { direction = "west" }), false)
+    eq(scroll:onScrollableSwipe(nil, { direction = "north" }), true) -- up/down still scroll
+end)
+
+test("review fix: long highlights are cut using the screen-scaled line height", function()
+    resetDB()
+    local Font = require("ui/font")
+    local Theme = require("blossom_theme")
+    local TB = stubs["ui/widget/textboxwidget"]
+    local real_face, real_size = Font.getFace, TB.getSize
+    -- a high-DPI screen: KOReader scales font sizes; text wraps into lines of that height
+    Font.getFace = function(_, name, size) return { name = name, size = size * 2 } end
+    TB.getSize = function(self)
+        local lines = math.ceil(#self.text * 8 / self.width)
+        local h = lines * self.face.size * 1.45
+        if self.height then h = math.min(h, self.height) end
+        return { w = self.width, h = h }
+    end
+    Theme.clearFaceCache()
+    local more = require("blossom_more"):new{ title = "t", kind = "highlights",
+        items = { { kind = "highlight", title = "B", text = string.rep("word ", 400), datetime = "2026-09-01 10:00:00", date = "1 Sep 2026" } } }
+    local avail = 300
+    local row = more:makeRow(more.items[1], avail)
+    Font.getFace, TB.getSize = real_face, real_size
+    Theme.clearFaceCache()
+    local box
+    walk(row, function(n) if n.kind == "TextboxWidget" then box = n end end)
+    assert(box.height, "cut to fit")
+    assert(box.height <= avail, box.height .. " > " .. avail)
+end)
+
+test("review fix: the garden leaves out its flower bed when there isn't room for both", function()
+    resetDB()
+    Screen.w, Screen.h = 800, 420 -- landscape-ish
+    local view = openView()
+    local bed
+    walk(view, function(n) if n.file and n.file:find("garden_bed") then bed = n end end)
+    eq(bed, nil)
+    Screen.w, Screen.h = 600, 800
+    view = openView()
+    walk(view, function(n) if n.file and n.file:find("garden_bed") then bed = n end end)
+    assert(bed, "portrait keeps the bed")
 end)
 
 H.done()

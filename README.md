@@ -166,6 +166,24 @@ while the bookshelf is open, so inside a book they say "Plugin not available". S
 Tip: bind it to a gesture in **Settings → Taps and gestures → Gesture manager**
 (**General → Blossom reading diary**, or **This book in Blossom** while reading).
 
+## 🌱 Updates
+
+Once Blossom is installed, it can update itself. Find it in **Tools (🔧) → ❀ Blossom reading diary**:
+
+- **Check for updates (v1.1.0)** looks for a newer Blossom on GitHub, turning Wi-Fi on if needed.
+  If there's one, it shows what's new and asks before installing. After installing, it offers to
+  restart KOReader.
+- **Check for updates automatically** (on by default) checks quietly at most once a day while
+  Wi-Fi is on. It only shows a small note; it never installs on its own.
+
+Updates are checked before anything changes, and nothing changes if any step fails:
+
+1. The download's checksum is verified.
+2. The new copy is unpacked next to the old one.
+3. The two are swapped. If anything goes wrong, your current Blossom stays as it was.
+
+The previous copy is kept as `blossom.koplugin.old` until the next start.
+
 ## 🎀 Good to know
 
 - **Statistics:** Blossom reads the **Statistics** plugin's data, so keep that plugin enabled
@@ -174,6 +192,7 @@ Tip: bind it to a gesture in **Settings → Taps and gestures → Gesture manage
   - `yearly_goal` (default 12)
   - `open_as` (`fullscreen` or `window`)
   - `start_page`
+  - `update_auto`, `last_update_check` and `update_available`, for the updater
 - **Covers:** they come from the Cover Browser cache when available, otherwise from the book file.
   Books that were moved or deleted get a soft placeholder tile instead.
 - **Highlights, bookmarks and snippets:** these come from each book's KOReader sidecar (`.sdr`).
@@ -247,6 +266,10 @@ luajit tests/test_data.lua
 luajit tests/test_plugin_load.lua
 ```
 
+```bash
+luajit tests/test_blossom_update.lua
+```
+
 Blossom Reads has its own suites:
 
 ```bash
@@ -267,6 +290,19 @@ build with it and saves every page to `docs/screenshots/`:
 tools/screenshots.sh ~/Applications/KOReader.app
 ```
 
+To release a plugin for the in-app updaters, commit and push the code, then:
+
+```bash
+tools/release.sh blossom 1.1.0
+```
+
+That's a dry run: it sets the version and builds `dist/blossom.koplugin.zip` with its `.sha256`.
+Commit and push the version bump, then publish:
+
+```bash
+tools/release.sh blossom 1.1.0 --publish
+```
+
 | File | What it does |
 |------|--------------|
 | `main.lua` | Menu, gesture action and database queries |
@@ -277,10 +313,12 @@ tools/screenshots.sh ~/Applications/KOReader.app
 | `blossom_more.lua` | The garden's gallery and list pages |
 | `blossom_covers.lua` | Matches statistics entries to book files and covers |
 | `blossom_theme.lua` | Grays, fonts, header, wavy line, quotes and other shared pieces |
+| `blossom_update.lua` | The updater: finds the newest `blossom-v…` GitHub Release, verifies and installs it |
 | `icons/` | The drawn bow, heart, pencil, close and back flowers, and garden flowers |
 | `tools/make_garden_icons.py` | Redraws the flower icons |
 | `tools/make_demo.py` | Builds the demo library (fictional books, drawn covers) |
 | `tools/screenshots.sh` | Rebuilds `docs/screenshots/` in the KOReader macOS build |
+| `tools/release.sh` | Builds a plugin's release zip + sha256, and with `--publish` creates the GitHub Release (`<plugin>-vX.Y.Z`) |
 | `blossomreads.koplugin/main.lua` | Blossom Reads: settings, sync triggers, menu, sign-in dialogs |
 | `blossomreads_plan.lua` / `_engine.lua` | Pure sync and goal decisions, and running them |
 | `blossomreads_login.lua` / `_http.lua` / `_api.lua` | Goodreads sign-in, cookie jar, the Goodreads calls |
