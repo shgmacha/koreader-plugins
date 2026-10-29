@@ -17,7 +17,7 @@ This repo holds two sister plugins:
 | Plugin | What it does |
 |---|---|
 | 🌸 **Blossom** (`blossom.koplugin`) | Your reading diary, from KOReader's statistics |
-| 🌼 **Blossom Reads** (`blossomreads.koplugin`) | Goodreads sync (progress, shelves, collections, read dates, rereads, ratings, challenge), in the same style. [Full guide →](docs/blossom-reads.md) |
+| **Goodreads Sync** (`goodreadssync.koplugin`) | Goodreads sync: progress, shelves, collections, read dates, rereads, ratings, reading challenge. Works on its own. [Full guide →](docs/goodreads-sync.md) |
 
 ---
 
@@ -205,52 +205,42 @@ The previous copy is kept as `blossom.koplugin.old` until the next start.
 
 ---
 
-## 🌼 Blossom Reads: Goodreads, the Blossom way
+## Goodreads Sync
 
-**Blossom Reads** (`blossomreads.koplugin`) is Blossom's sister plugin. It keeps your reading in sync
-with Goodreads, and every screen floats over your book in Blossom's soft style.
+**Goodreads Sync** (`goodreadssync.koplugin`) keeps KOReader and Goodreads in step. It's a
+separate plugin that works on its own; Blossom isn't needed. Its pages open as windows over
+your book, styled after the *brew* app: an espresso title bar, cards with dark section headers,
+serif titles, rendered in grayscale for e-ink.
 
 <p align="center">
-  <img src="docs/screenshots/r1-home.png" width="260" alt="My Goodreads">
-  <img src="docs/screenshots/r2-this-book.png" width="260" alt="This book">
-  <img src="docs/screenshots/r3-shelf.png" width="260" alt="A shelf">
+  <img src="docs/screenshots/gs1-home.png" width="260" alt="My Goodreads">
+  <img src="docs/screenshots/gs2-this-book.png" width="260" alt="This book">
+  <img src="docs/screenshots/gs3-shelf.png" width="260" alt="A shelf">
 </p>
 
-- **Syncs like iCloud Sync:**
-  - quietly, when Wi-Fi connects, on wake and when you close a book, or whenever you tap
-    *Sync now*
-  - Goodreads hiccups are retried up to 3 times
-  - books that still fail are tried again at the next sync
-- **Progress and status:** progress only ever goes up. Starting a book moves it to *Currently
-  Reading*; finishing it moves it to *Read*.
-- **Collections become shelves:** *To Be Read* → Want to Read, *favorites* → a favorites shelf,
-  any other collection → a shelf of the same name. Your real reading status always wins.
-  Custom shelves are kept matched (removed when the book leaves the collection).
-- **Read dates and rereads:** finished books reach Goodreads with the day you finished them
-  (and when you started, from your reading stats), so they count in the right year's challenge.
-  Reading a book again and finishing it adds a new read date.
-- **Every book gets linked:** by ISBN, its details, or a `Title - Author.epub` file name. Sync
-  now finds every finished book in your library, and the edition you already own on Goodreads
-  is preferred.
-- **This book, shelves, search and your reading challenge,** as floating Blossom pages. With
-  Blossom installed, the yearly goal stays the same in both.
-
-- **Updates itself:** *Check for updates* installs new releases from GitHub, with each download
-  checked first. A daily check asks before installing anything.
+- **Sync:** quiet and automatic. It runs on Wi-Fi connect, on wake and when you close a book, or
+  when you tap *Sync now*. Goodreads hiccups are retried; books that still fail are tried again
+  next time.
+- **Progress and status:** progress only goes up. Starting a book makes it *Currently Reading*;
+  finishing it makes it *Read*, with the day you finished as its date read. Rereads add a new
+  read date.
+- **Collections become shelves:** *To Be Read* → Want to Read, any other collection → a shelf of
+  the same name. Your real reading status always wins.
+- **Every book gets linked:** by ISBN, title or file name, preferring the edition you already
+  have on Goodreads.
+- **This book, shelves, search and your reading challenge** as pages over the book.
+- **Updates itself** from GitHub releases, checking each download first.
+- **Optional:** with Blossom installed, the yearly goal can be shared with it.
 
 **Install:**
-1. Copy `blossomreads.koplugin` into KOReader's `plugins` folder.
+1. Copy `goodreadssync.koplugin` into KOReader's `plugins` folder.
 2. Restart KOReader.
-3. Sign in from **Tools → ❀ Blossom Reads**.
+3. Sign in from **Tools → Goodreads Sync**.
 
-If you used Goodreads KO Sync, turn it off.
+Coming from *Blossom Reads* (its old name)? Your sign-in and links carry over. Delete
+`plugins/blossomreads.koplugin` afterwards.
 
-📖 **[Read the full Blossom Reads guide](docs/blossom-reads.md):**
-- every setting
-- how matching works
-- collections in detail
-- messages and troubleshooting
-- what's stored, and privacy
+📖 **[Read the full Goodreads Sync guide](docs/goodreads-sync.md)**
 
 ---
 
@@ -270,10 +260,10 @@ luajit tests/test_plugin_load.lua
 luajit tests/test_blossom_update.lua
 ```
 
-Blossom Reads has its own suites:
+Goodreads Sync has its own suites:
 
 ```bash
-for t in core plan engine load; do luajit tests/test_blossomreads_$t.lua; done
+for t in core plan engine load; do luajit tests/test_goodreadssync_$t.lua; done
 ```
 
 And so does Zero Clicker:
@@ -319,12 +309,14 @@ tools/release.sh blossom 1.1.0 --publish
 | `tools/make_demo.py` | Builds the demo library (fictional books, drawn covers) |
 | `tools/screenshots.sh` | Rebuilds `docs/screenshots/` in the KOReader macOS build |
 | `tools/release.sh` | Builds a plugin's release zip + sha256, and with `--publish` creates the GitHub Release (`<plugin>-vX.Y.Z`) |
-| `blossomreads.koplugin/main.lua` | Blossom Reads: settings, sync triggers, menu, sign-in dialogs |
-| `blossomreads_plan.lua` / `_engine.lua` | Pure sync and goal decisions, and running them |
-| `blossomreads_login.lua` / `_http.lua` / `_api.lua` | Goodreads sign-in, cookie jar, the Goodreads calls |
-| `blossomreads_identify.lua` | Matching a book to Goodreads by ISBN, ASIN or title and author |
-| `blossomreads_store.lua` / `_secret.lua` / `_covers.lua` | Files, encryption, cover cache |
-| `blossomreads_view.lua` / `_book.lua` / `_list.lua` / `_theme.lua` | The floating Blossom pages |
-| `tools/screenshots_reads.sh` | Blossom Reads screenshots with made-up Goodreads data |
+| `goodreadssync.koplugin/main.lua` | Goodreads Sync: settings, sync triggers, menu, sign-in dialogs |
+| `goodreadssync_plan.lua` / `_engine.lua` | Pure sync and goal decisions, and running them |
+| `goodreadssync_login.lua` / `_http.lua` / `_api.lua` | Goodreads sign-in, cookie jar, the Goodreads calls |
+| `goodreadssync_identify.lua` | Matching a book to Goodreads by ISBN, ASIN or title and author |
+| `goodreadssync_store.lua` / `_secret.lua` / `_covers.lua` | Files, encryption, cover cache |
+| `goodreadssync_view.lua` / `_book.lua` / `_list.lua` / `_theme.lua` | Goodreads Sync's pages and brew-style theme |
+| `goodreadssync_review.lua` / `_update.lua` | Read dates and rereads; updates from GitHub releases |
+| `tools/screenshots_goodreadssync.sh` | Goodreads Sync screenshots with made-up Goodreads data |
+| `tools/release_goodreadssync.sh` | Publishes a Goodreads Sync release for the in-app updater |
 | `zeroclicker.koplugin/main.lua` | Zero Clicker: claims the controller, takes its events, button learning, menu |
 | `zeroclicker_core.lua` | Pure press detection (keys and D-pad axes), default buttons, name matching |
