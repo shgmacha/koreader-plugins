@@ -1,6 +1,6 @@
 #!/bin/sh
 # Publishes a Goodreads Sync release that the in-app updater can install.
-#   tools/release_reads.sh "What's new (one line or more)"
+#   tools/release_goodreadssync.sh "What's new (one line or more)"
 # Packs exactly what's committed in goodreadssync.koplugin/ (git archive), adds its SHA-256,
 # and creates the GitHub release "goodreadssync-vX.Y.Z" (version from _meta.lua).
 set -e
