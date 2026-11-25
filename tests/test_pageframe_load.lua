@@ -461,6 +461,73 @@ test("no frames installed: nothing painted, the switch greyed out, a hint in the
     eq(ui.styletweak:getCssText(), nil) -- no frame, so no font CSS either
 end)
 
+-- Where the plugin shows up -------------------------------------------------------
+
+-- The file browser: no document, no view, no typesetting — just the main menu.
+local function newFileManager()
+    local fm = { events = {} }
+    function fm:handleEvent(ev) table.insert(self.events, ev) end
+    fm.menu = { registerToMainMenu = function(_, plugin) fm.menu_items = {}; plugin:addToMainMenu(fm.menu_items) end }
+    fm.plugin = W.Plugin:new{ ui = fm }
+    return fm
+end
+
+test("Page frame is in the Tools menu and the typeset tab while reading", function()
+    fresh()
+    local ui = newReader()
+    eq(ui.menu_items.pageframe.sorting_hint, "tools")
+    eq(ui.menu_items.pageframe.text, "Page frame")
+    eq(ui.menu_items.pageframe_typeset.sorting_hint, "typeset")
+    eq(ui.menu_items.pageframe_typeset.text, "Page frame")
+    -- both open the same menu
+    local a, b = ui.menu_items.pageframe.sub_item_table_func(), ui.menu_items.pageframe_typeset.sub_item_table_func()
+    eq(#a, #b)
+    eq(a[1].text, "Show page frame")
+    eq(b[1].text, "Show page frame")
+    eq(W.Plugin.is_doc_only, false) -- loaded in the file browser too
+end)
+
+test("file browser: Page frame is in Tools there too, and the switch works", function()
+    fresh({ custom_files = { "Rose garland.webp", "lace.png" } })
+    local fm = newFileManager()
+    eq(fm.menu_items.pageframe.sorting_hint, "tools")
+    eq(fm.menu_items.pageframe_typeset, nil) -- the file browser has no typeset tab
+    local items = fm.menu_items.pageframe.sub_item_table_func()
+    local switch = menuItem(items, "Show page frame")
+    eq({ switch.enabled_func(), switch.checked_func() }, { true, true })
+    switch.callback()
+    eq(W.settings.pageframe.enabled, false)
+    eq(#W.dirty, 0) -- no book on screen to repaint
+    eq(#fm.events, 0) -- no style sheet to re-apply
+    fm.plugin:onTogglePageFrame()
+    eq(W.settings.pageframe.enabled, true)
+    menuItem(items, "lace").callback()
+    eq(W.settings.pageframe.frame, "custom:lace.png")
+end)
+
+test("file browser: the book options can be set there, for the next book", function()
+    fresh()
+    local fm = newFileManager()
+    local items = fm.menu_items.pageframe.sub_item_table_func()
+    local keep = menuItem(items, "Keep text inside the frame")
+    eq({ keep.enabled_func(), keep.checked_func() }, { true, true })
+    keep.callback()
+    eq(W.settings.pageframe.fit_text, false)
+    local italic = menuItem(items, "Italic text")
+    eq(italic.enabled_func(), true)
+    italic.callback()
+    eq(W.settings.pageframe.italic, true)
+    eq(menuItem(items, "Font with the frame").enabled_func(), true)
+    eq(#menuItem(items, "Font with the frame").sub_item_table_func() > 2, true)
+    eq(W.update.cleaned, { PLUGIN_DIR }) -- update leftovers are still cleaned up
+end)
+
+test("file browser: nothing reader-only runs (no fonts registered, no view, no paint hook)", function()
+    fresh()
+    newFileManager()
+    eq(#W.registered_fonts, 0)
+end)
+
 -- Menu --------------------------------------------------------------------------
 
 test("menu: the Show page frame switch, then the frames in koreader/frames; the first is the default", function()

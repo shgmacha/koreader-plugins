@@ -49,7 +49,7 @@ local fonts_registered = false
 
 local PageFrame = WidgetContainer:extend{
     name = "pageframe",
-    is_doc_only = true,
+    is_doc_only = false, -- also in the file browser, so the switch is always in Tools
 }
 
 -- Settings ----------------------------------------------------------------------
@@ -322,13 +322,17 @@ end
 function PageFrame:init()
     self.settings = readSettings()
     self:refreshFrames()
+    -- In the file browser there's no book: only the menu (settings apply to the next book).
+    self.in_reader = self.ui.document ~= nil
     self.is_reflowable = self.ui.rolling ~= nil
     if self.is_reflowable then
         self:registerFonts()
         self:hookStyleSheet()
     end
     self.layer = FrameLayer:new(self)
-    self.ui.view:registerViewModule("pageframe", self.layer)
+    if self.ui.view then
+        self.ui.view:registerViewModule("pageframe", self.layer)
+    end
     Dispatcher:registerAction("pageframe_toggle", {
         category = "none", event = "TogglePageFrame", title = _("Toggle page frame"), reader = true,
     })
@@ -462,7 +466,7 @@ function PageFrame:applyChange(css)
         self.ui:handleEvent(Event:new("ApplyStyleSheet"))
     end
     if self.ready then self:refit() end
-    UIManager:setDirty(self.ui.dialog, "full")
+    if self.in_reader then UIManager:setDirty(self.ui.dialog, "full") end
 end
 
 --- Choose a frame (which also switches the frame on).
@@ -612,13 +616,23 @@ end
 function PageFrame:addToMainMenu(menu_items)
     menu_items.pageframe = {
         text = _("Page frame"),
-        sorting_hint = "typeset",
+        sorting_hint = "tools", -- next to your other plugins
         sub_item_table_func = function() return self:menuItems() end,
     }
+    if self.in_reader then
+        -- The same menu in the typeset tab, next to the book's margins and font.
+        menu_items.pageframe_typeset = {
+            text = _("Page frame"),
+            sorting_hint = "typeset",
+            sub_item_table_func = function() return self:menuItems() end,
+        }
+    end
 end
 
+-- Greyed out only in a PDF/CBZ/DjVu book (fixed layout); in the file browser it sets the
+-- option for the next book.
 local function reflowableOnly(item, plugin)
-    item.enabled_func = function() return plugin.is_reflowable end
+    item.enabled_func = function() return not plugin.in_reader or plugin.is_reflowable end
     return item
 end
 
@@ -682,7 +696,7 @@ function PageFrame:menuItems()
     items[#items + 1] = reflowableOnly({
         text = _("Keep text inside the frame"),
         help_text = _([[Keeps your own KOReader margins, and widens a side only as far as needed so the text never touches the frame's drawing. Your margins come back exactly when this is off or the frame is hidden. Only for reflowable books (EPUB and similar).]]),
-        checked_func = function() return self.is_reflowable and self.settings.fit_text end,
+        checked_func = function() return (not self.in_reader or self.is_reflowable) and self.settings.fit_text end,
         callback = function()
             self.settings.fit_text = not self.settings.fit_text
             self:applyChange(false)
@@ -698,7 +712,7 @@ function PageFrame:menuItems()
     items[#items + 1] = reflowableOnly({
         text = _("Italic text"),
         help_text = _([[Sets the text in italics while a frame is shown. Emphasised words turn upright, so they still stand out.]]),
-        checked_func = function() return self.is_reflowable and self.settings.italic end,
+        checked_func = function() return (not self.in_reader or self.is_reflowable) and self.settings.italic end,
         callback = function()
             self.settings.italic = not self.settings.italic
             self:applyChange(true)
@@ -740,7 +754,11 @@ function PageFrame:fontItems()
     included.separator = true
     local items = { keep, included }
     local ok, cre = pcall(require, "libs/libkoreader-cre")
-    local faces = ok and cre.getFontFaces() or {}
+    local faces = {}
+    if ok then
+        local got, list = pcall(cre.getFontFaces) -- the engine may not be started in the file browser
+        if got and type(list) == "table" then faces = list end
+    end
     table.sort(faces)
     for _, face in ipairs(faces) do
         if face ~= Core.DEFAULT_FONT then

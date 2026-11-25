@@ -15,7 +15,10 @@ A decorative frame around the page while you read, for KOReader.
 
 ## The menu
 
-Open the reader menu, go to the **typeset** tab (the "A" icon), then **Page frame**.
+Open the top menu, go to the **Tools** tab (the wrench), then **Page frame**. It's there both in
+the file browser and while you read, next to your other plugins. While reading, the same menu is
+also in the **typeset** tab (the "A"), next to the book's margins and font. To switch the whole plugin off,
+use Tools → More tools → Plugin management → User plugins → Page Frame.
 
 | Item | What it does |
 |---|---|
