@@ -35,7 +35,6 @@ local rshift = require("bit").rshift
 
 local SETTINGS_KEY = "pageframe"
 local DOC_KEY = "pageframe_margins"
-local NONE = "none"
 local CELL = 8 -- grid cell size, in pixels, for finding the text area
 local UPDATE_EVERY = 24 * 3600 -- automatic update check: at most once a day
 
@@ -59,10 +58,23 @@ local function readSettings()
     local s = G_reader_settings:readSetting(SETTINGS_KEY) or {}
     -- 1.0.0 shipped a built-in frame; that id no longer exists, so fall back to the default.
     if type(s.frame) == "string" and s.frame:match("^builtin:") then s.frame = nil end
+    -- 1.1.0 turned the frame off by choosing "None": that's now the switch, and the frame is kept.
+    if s.frame == "none" then
+        s.enabled = false
+        s.frame = s.last_frame
+    end
+    s.last_frame = nil
+    if s.enabled == nil then s.enabled = true end
     if not Core.DARKNESS[s.darkness or ""] then s.darkness = "soft" end
+    -- 1.2.0: your KOReader font is kept, and your margins are only widened where the frame needs
+    -- it. Setups from 1.0/1.1 (frame margins and font on) are moved to that once.
+    if (s.schema or 1) < 2 then
+        s.fit_text, s.font, s.italic = true, Core.KEEP_FONT, false
+        s.schema = 2
+    end
     if s.fit_text == nil then s.fit_text = true end
-    if s.font == nil then s.font = Core.DEFAULT_FONT end
-    if s.italic == nil then s.italic = true end
+    if s.font == nil then s.font = Core.KEEP_FONT end
+    if s.italic == nil then s.italic = false end
     if s.crisp == nil then s.crisp = true end
     if s.auto_update_check == nil then s.auto_update_check = true end
     return s
@@ -70,6 +82,10 @@ end
 
 function PageFrame:saveSettings()
     G_reader_settings:saveSetting(SETTINGS_KEY, self.settings)
+end
+
+function PageFrame:cacheDir()
+    return DataStorage:getDataDir() .. "/cache/pageframe"
 end
 
 function PageFrame:customDir()
@@ -85,12 +101,17 @@ function PageFrame:refreshFrames()
     self.frames = Core.listFrames(builtins, self:customDir(), lfs)
 end
 
---- The frame being shown, or nil. With no saved choice, that's the first frame in the list.
+--- The chosen frame (shown or not), or nil. With no saved choice, that's the first frame in the list.
 function PageFrame:currentFrame()
     local id = self.settings.frame
-    if id == NONE then return nil end
     if id == nil then return self.frames[1] end
     return Core.findFrame(self.frames, id)
+end
+
+--- The frame on the page: the chosen frame while "Show page frame" is on, else nil.
+function PageFrame:shownFrame()
+    if not self.settings.enabled then return nil end
+    return self:currentFrame()
 end
 
 -- Ink mask ---------------------------------------------------------------------
@@ -219,18 +240,39 @@ end
 --- The prepared frame ({ mask, w, h, insets }) for the current settings and size, or nil.
 function FrameLayer:prepare()
     local plugin = self.plugin
-    local frame = plugin:currentFrame()
+    local frame = plugin:shownFrame()
     if not frame then
         self:free()
         return nil
     end
     local w, h = self:area()
-    local key = table.concat({ frame.path, w, h, plugin.settings.darkness, tostring(plugin.settings.crisp) }, "|")
+    local attr = lfs.attributes(frame.path) or {}
+    local key = Core.cacheKey{
+        path = frame.path, size = attr.size, mtime = attr.modification, w = w, h = h,
+        darkness = plugin.settings.darkness, crisp = plugin.settings.crisp, cell = CELL,
+    }
     if self.cache and self.cache.key == key then return self.cache end
     if self.failed_key == key then return nil end
 
     self:free()
     local started = os.clock()
+    local Cache = require("pageframe_cache")
+    local dir = plugin:cacheDir()
+
+    -- Prepared before (this image, size and settings)? Load it instead of rebuilding.
+    local loaded, mask, insets = pcall(Cache.load, dir, key, w, h, function(mw, mh)
+        return Blitbuffer.new(mw, mh, Blitbuffer.TYPE_BB8)
+    end, PageFrame._cache_fs)
+    if loaded and mask then
+        logger.info(string.format("PageFrame: loaded %s from cache at %dx%d in %.2f s", frame.name, w, h, os.clock() - started))
+        self.failed_key = nil
+        self.cache = { key = key, mask = mask, w = w, h = h, insets = insets }
+        plugin:onFramePrepared()
+        return self.cache
+    elseif not loaded then
+        logger.warn("PageFrame: cache read failed", mask)
+    end
+
     local ok, result = pcall(function()
         local src = RenderImage:renderImageFile(frame.path, false, w, h)
         if not src then error("could not decode image") end
@@ -254,6 +296,12 @@ function FrameLayer:prepare()
         return nil
     end
     logger.info(string.format("PageFrame: prepared %s at %dx%d in %.2f s", frame.name, w, h, os.clock() - started))
+    local saved_ok, saved = pcall(Cache.save, dir, key, w, h, result.mask, result.insets, PageFrame._cache_fs)
+    if saved_ok and saved then
+        pcall(Cache.trim, dir, Cache.KEEP, PageFrame._cache_fs)
+    else
+        logger.warn("PageFrame: couldn't save the prepared frame to", dir, saved)
+    end
     self.failed_key = nil
     self.cache = result
     plugin:onFramePrepared()
@@ -319,7 +367,7 @@ function PageFrame:hookStyleSheet()
     local plugin = self
     styletweak.getCssText = function(this)
         local css = original(this)
-        local extra = Core.fontCss(plugin.settings, plugin:currentFrame() ~= nil)
+        local extra = Core.fontCss(plugin.settings, plugin:shownFrame() ~= nil)
         if extra == "" then return css end
         if css and css ~= "" then return css .. "\n" .. extra end
         return extra
@@ -373,14 +421,24 @@ function PageFrame:wantedMargins()
     return Core.marginsFor(frame.insets, Screen:scaleBySize(1000) / 1000)
 end
 
+--- Your KOReader margins, widened on a side only as far as needed to clear the frame.
 function PageFrame:refit()
-    local want = self:wantedMargins()
-    if not want then return self:restoreMargins() end
+    local need = self:wantedMargins()
+    if not need then return self:restoreMargins() end
     local state = self.ui.doc_settings:readSetting(DOC_KEY)
-    if state and Core.marginsEqual(state.applied, want) then return end
-    state = state or { saved = self:currentMargins() }
-    state.applied = want
-    self.ui.doc_settings:saveSetting(DOC_KEY, state)
+    local current = self:currentMargins()
+    -- Your own margins: as they were before Page Frame widened them, or as you've set them since.
+    local own = current
+    if state and Core.marginsEqual(current, state.applied) then own = state.saved end
+    local want = Core.widen(own, need)
+    if Core.marginsEqual(want, own) then
+        -- Your margins already clear the frame: leave them as they are.
+        if state then self.ui.doc_settings:delSetting(DOC_KEY) end
+        if not Core.marginsEqual(current, own) then self:setMargins(own) end
+        return
+    end
+    if state and Core.marginsEqual(state.applied, want) and Core.marginsEqual(current, want) then return end
+    self.ui.doc_settings:saveSetting(DOC_KEY, { saved = own, applied = want })
     self:setMargins(want)
 end
 
@@ -407,23 +465,21 @@ function PageFrame:applyChange(css)
     UIManager:setDirty(self.ui.dialog, "full")
 end
 
+--- Choose a frame (which also switches the frame on).
 function PageFrame:setFrame(id)
-    local shown = self:currentFrame()
-    if shown and id == NONE then
-        self.settings.last_frame = shown.id
-    end
     self.settings.frame = id
+    self.settings.enabled = true
+    self:applyChange(true)
+end
+
+--- "Show page frame": off hides the frame, its font and its margins; on brings them back.
+function PageFrame:setEnabled(on)
+    self.settings.enabled = on
     self:applyChange(true)
 end
 
 function PageFrame:onTogglePageFrame()
-    if self:currentFrame() then
-        self:setFrame(NONE)
-    else
-        local id = self.settings.last_frame
-        if not Core.findFrame(self.frames, id) then id = self.frames[1] and self.frames[1].id end
-        if id then self:setFrame(id) end
-    end
+    if self:currentFrame() then self:setEnabled(not self.settings.enabled) end
     return true
 end
 
@@ -570,10 +626,12 @@ function PageFrame:menuItems()
     self:refreshFrames()
     local items = {
         {
-            text = _("None"),
-            radio = true,
-            checked_func = function() return self:currentFrame() == nil end,
-            callback = function() self:setFrame(NONE) end,
+            text = _("Show page frame"),
+            help_text = _([[Turns the frame on or off. Off also drops the frame's font and gives the book its own margins back. Your frame and settings are kept for next time.]]),
+            checked_func = function() return self:shownFrame() ~= nil end,
+            enabled_func = function() return #self.frames > 0 end,
+            callback = function() self:setEnabled(not self.settings.enabled) end,
+            separator = true,
         },
     }
     for _, frame in ipairs(self.frames) do
@@ -581,8 +639,8 @@ function PageFrame:menuItems()
             text = frame.name,
             radio = true,
             checked_func = function()
-                local shown = self:currentFrame()
-                return shown ~= nil and shown.id == frame.id
+                local chosen = self:currentFrame()
+                return chosen ~= nil and chosen.id == frame.id
             end,
             callback = function() self:setFrame(frame.id) end,
         }
@@ -623,7 +681,7 @@ function PageFrame:menuItems()
     }
     items[#items + 1] = reflowableOnly({
         text = _("Keep text inside the frame"),
-        help_text = _([[Sets this book's margins so the text never touches the frame's drawing. The book's own margins come back when the frame is turned off. Only for reflowable books (EPUB and similar).]]),
+        help_text = _([[Keeps your own KOReader margins, and widens a side only as far as needed so the text never touches the frame's drawing. Your margins come back exactly when this is off or the frame is hidden. Only for reflowable books (EPUB and similar).]]),
         checked_func = function() return self.is_reflowable and self.settings.fit_text end,
         callback = function()
             self.settings.fit_text = not self.settings.fit_text

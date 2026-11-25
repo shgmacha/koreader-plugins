@@ -273,6 +273,12 @@ test("marginsFor: converts each side", function()
     eq(Core.marginsFor({ 208, 344, 208, 200 }, 2.0), { 104, 172, 104, 100 })
 end)
 
+test("widen: each side is the larger of yours and the frame's", function()
+    eq(Core.widen({ 50, 30, 50, 30 }, { 101, 167, 98, 97 }), { 101, 167, 98, 97 })
+    eq(Core.widen({ 120, 200, 120, 120 }, { 101, 167, 98, 97 }), { 120, 200, 120, 120 })
+    eq(Core.widen({ 10, 200, 99, 0 }, { 101, 167, 98, 97 }), { 101, 200, 99, 97 })
+end)
+
 test("marginsEqual", function()
     eq(Core.marginsEqual({ 1, 2, 3, 4 }, { 1, 2, 3, 4 }), true)
     eq(Core.marginsEqual({ 1, 2, 3, 4 }, { 1, 2, 3, 5 }), false)
@@ -313,6 +319,43 @@ end)
 test("fontCss: quotes in a font name can't break the CSS", function()
     local css = Core.fontCss({ font = 'Evil"; } body { color: red', italic = false }, true)
     assert(css:find('font-family: "Evil; } body { color: red" !important', 1, true))
+end)
+
+-- cacheKey ---------------------------------------------------------------------
+
+local BASE = { path = "/k/frames/Rose garland.webp", size = 417772, mtime = 1794120000,
+               w = 1236, h = 1571, darkness = "soft", crisp = true, cell = 8 }
+local function with(changes)
+    local k = {}
+    for name, v in pairs(BASE) do k[name] = v end
+    for name, v in pairs(changes) do k[name] = v end
+    return k
+end
+
+test("cacheKey: stable and readable", function()
+    eq(Core.cacheKey(BASE), Core.cacheKey(with({})))
+    eq(Core.cacheKey(BASE), "1|/k/frames/Rose garland.webp|417772|1794120000|1236x1571|soft|true|8")
+end)
+
+test("cacheKey: changes with every input the frame depends on", function()
+    local base = Core.cacheKey(BASE)
+    for _, change in ipairs({
+        { path = "/k/frames/Lace.png" }, { size = 1 }, { mtime = 1 }, { w = 1648 }, { h = 1648 },
+        { darkness = "bold" }, { crisp = false }, { cell = 16 },
+    }) do
+        local name = next(change)
+        assert(Core.cacheKey(with(change)) ~= base, "key ignores " .. name)
+    end
+    local algo = Core.ALGO
+    Core.ALGO = "2"
+    assert(Core.cacheKey(BASE) ~= base, "key ignores ALGO")
+    Core.ALGO = algo
+end)
+
+test("cacheKey: tabs, newlines and bars in a path can't break the cache header", function()
+    local key = Core.cacheKey(with({ path = "/k/a\tb\nc|d.png" }))
+    eq(key:find("[\t\n]"), nil)
+    eq(select(2, key:gsub("|", "")), 7) -- exactly the 7 separators
 end)
 
 H.done()

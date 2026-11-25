@@ -53,8 +53,69 @@ local function ringImage(w, h)
     return bb
 end
 
+-- An in-memory folder for the frame cache (pageframe_cache's fs interface).
+local function cacheFs(files)
+    local clock = 0
+    local fs = { saves = 0 }
+    function fs.open(path, mode)
+        if mode:sub(1, 1) == "r" then
+            local data = files[path]
+            if not data then return nil end
+            local pos = 1
+            return {
+                read = function(_, what)
+                    if pos > #data then return nil end
+                    if what == "*l" then
+                        local nl = data:find("\n", pos, true) or (#data + 1)
+                        local line = data:sub(pos, nl - 1)
+                        pos = nl + 1
+                        return line
+                    end
+                    local chunk = data:sub(pos, pos + what - 1)
+                    pos = pos + #chunk
+                    return chunk
+                end,
+                close = function() return true end,
+            }
+        end
+        if W.cache_unwritable then return nil end
+        local parts = {}
+        return {
+            write = function(_, x) parts[#parts + 1] = x; return true end,
+            close = function() clock = clock + 1; files[path] = table.concat(parts); return true end,
+        }
+    end
+    function fs.rename(a, b)
+        if not files[a] then return false end
+        files[b], files[a] = files[a], nil
+        fs.saves = fs.saves + 1
+        return true
+    end
+    function fs.remove(p) files[p] = nil; return true end
+    function fs.mkdir() end
+    function fs.list(dir)
+        local out = {}
+        for p in pairs(files) do
+            local name = p:sub(#dir + 2)
+            if p:sub(1, #dir + 1) == dir .. "/" and not name:find("/") then out[#out + 1] = name end
+        end
+        return out
+    end
+    function fs.mtime() return clock end
+    return fs
+end
+
+-- Margin fitting and the frame font are opt-in since 1.2.0; tests of those features turn them on.
+local OPTED_IN = { fit_text = true, font = "Cormorant Garamond", italic = true, schema = 2 }
+
 local function fresh(opts)
     opts = opts or {}
+    if opts.opted_in then
+        opts.settings = opts.settings or {}
+        local pf = opts.settings.pageframe or {}
+        for k, v in pairs(OPTED_IN) do if pf[k] == nil then pf[k] = v end end
+        opts.settings.pageframe = pf
+    end
     W = {
         settings = opts.settings or {},
         notified = {}, dirty = {}, ticks = {}, registered_fonts = {},
@@ -81,6 +142,13 @@ local function fresh(opts)
 
     local lfs = {
         attributes = function(path, what)
+            if what == nil then
+                -- A frame image's size and modification time (part of the cache key).
+                if path:match("^" .. DATA_DIR .. "/frames/") then
+                    return { mode = "file", size = 1000, modification = W.image_mtime }
+                end
+                return nil
+            end
             if path == PLUGIN_DIR .. "/fonts" then return "directory" end
             if path == DATA_DIR .. "/frames" and W.custom_files then return "directory" end
             return nil
@@ -173,6 +241,11 @@ local function fresh(opts)
         package.preload[name] = function() return mod end
     end
     package.loaded["pageframe_core"] = nil
+    package.loaded["pageframe_cache"] = nil
+    W.image_mtime = 1
+    -- koreader/cache/pageframe, in memory; survives fresh() only if passed in (a "second session").
+    W.cache_files = opts.cache_files or {}
+    W.cache_fs = cacheFs(W.cache_files)
     W.masks = {}
 
     _G.G_reader_settings = {
@@ -188,7 +261,12 @@ local function fresh(opts)
     for k, v in pairs(dofile(PLUGIN_DIR .. "/_meta.lua")) do
         if k ~= "name" then Plugin[k] = v end
     end
+    -- Like PluginLoader, keep the plugin folder on package.path (modules are required lazily).
     package.path = saved_path
+    if not package.path:find(PLUGIN_DIR .. "/?.lua", 1, true) then
+        package.path = package.path .. ";" .. PLUGIN_DIR .. "/?.lua"
+    end
+    Plugin._cache_fs = W.cache_fs
     W.Plugin = Plugin
     return W
 end
@@ -282,13 +360,74 @@ test("loads like KOReader: meta fields copied, no method shadowed", function()
     eq(W.action.def.event, "TogglePageFrame")
 end)
 
-test("default settings: first frame in koreader/frames, soft, fit text, Cormorant Garamond italic", function()
+test("default settings: first frame, soft, crisp, margins widened only if needed, your font", function()
     fresh()
     local ui = newReader()
     local s = ui.plugin.settings
-    eq({ s.frame, s.darkness, s.fit_text, s.font, s.italic, s.crisp },
-        { nil, "soft", true, "Cormorant Garamond", true, true })
-    eq(ui.plugin:currentFrame().name, "Rose garland")
+    eq({ s.frame, s.darkness, s.fit_text, s.font, s.italic, s.crisp, s.enabled },
+        { nil, "soft", true, "keep", false, true, true })
+end)
+
+test("by default: your margins widened only where the frame needs it, and no font CSS", function()
+    fresh()
+    local ui = newReader({ tweak_css = "p { margin: 0 }" })
+    ui.plugin:onReaderReady(); W.flush()
+    eq(#paint(ui), 1)
+    eq(margins(ui), FIT) -- your 15s are narrower than the frame needs (32) on every side
+    eq(ui.doc_store.pageframe_margins, { saved = { 15, 15, 15, 15 }, applied = FIT })
+    eq(countEvents(ui, "ApplyStyleSheet"), 0)
+    eq(ui.styletweak:getCssText(), "p { margin: 0 }")
+end)
+
+test("a side where your margin is already wider than needed keeps your margin", function()
+    fresh()
+    local ui = newReader({ configurable = { h_page_margins = { 50, 15 }, t_page_margin = 40, b_page_margin = 15 } })
+    ui.plugin:onReaderReady(); W.flush()
+    eq(margins(ui), { 50, 40, 32, 32 })
+end)
+
+test("margins that already clear the frame are left completely alone", function()
+    fresh()
+    local ui = newReader({ configurable = { h_page_margins = { 60, 60 }, t_page_margin = 60, b_page_margin = 60 } })
+    ui.plugin:onReaderReady(); W.flush()
+    eq(margins(ui), { 60, 60, 60, 60 })
+    eq(countEvents(ui, "SetPageMargins"), 0)
+    eq(ui.doc_store.pageframe_margins, nil)
+end)
+
+test("widening a margin by hand while the frame is on becomes your new margin", function()
+    fresh()
+    local ui = newReader()
+    ui.plugin:onReaderReady(); W.flush()
+    ui.document.configurable.h_page_margins = { 70, 32 } -- you widened the left side yourself
+    ui.plugin:refit()
+    eq(margins(ui), { 70, 32, 32, 32 })
+    eq(ui.doc_store.pageframe_margins, nil) -- nothing of ours left to undo
+end)
+
+test("1.1.0 setups move once to: your font, margins widened only if needed", function()
+    fresh({ settings = { pageframe = { fit_text = false, font = "Cormorant Garamond", italic = true, darkness = "bold" } } })
+    local ui = newReader()
+    local s = ui.plugin.settings
+    eq({ s.fit_text, s.font, s.italic, s.schema, s.darkness }, { true, "keep", false, 2, "bold" })
+end)
+
+test("...and choices made after that stick (the move happens only once)", function()
+    fresh({ settings = { pageframe = { fit_text = true, font = "Literata", italic = true, schema = 2 } } })
+    local s = newReader().plugin.settings
+    eq({ s.fit_text, s.font, s.italic }, { true, "Literata", true })
+end)
+
+test("a book 1.1.0 fitted keeps clear margins and still remembers your own", function()
+    fresh({ settings = { pageframe = { fit_text = true, font = "Cormorant Garamond", italic = true } } })
+    local store = { pageframe_margins = { saved = { 15, 15, 15, 15 }, applied = FIT } }
+    local ui = newReader({ doc_store = store, configurable = {
+        h_page_margins = { FIT[1], FIT[3] }, t_page_margin = FIT[2], b_page_margin = FIT[4] } })
+    ui.plugin:onReaderReady(); W.flush()
+    eq(margins(ui), FIT)
+    eq(countEvents(ui, "SetPageMargins"), 0)
+    menuItem(menu(ui), "Show page frame").callback()
+    eq(margins(ui), { 15, 15, 15, 15 })
 end)
 
 test("the default frame isn't saved until one is picked", function()
@@ -306,15 +445,16 @@ test("1.0.0's built-in frame id falls back to the first frame in koreader/frames
     eq(ui.plugin:currentFrame().id, "custom:Rose garland.webp")
 end)
 
-test("no frames installed: nothing painted, None checked, a greyed-out hint in the menu", function()
+test("no frames installed: nothing painted, the switch greyed out, a hint in the menu", function()
     fresh({ no_frames = true })
     local ui = newReader()
     ui.plugin:onReaderReady(); W.flush()
     eq(#paint(ui), 0)
     eq(countEvents(ui, "SetPageMargins"), 0)
     local items = menu(ui)
-    eq(items[1].text, "None")
-    eq(items[1].checked_func(), true)
+    eq(items[1].text, "Show page frame")
+    eq(items[1].checked_func(), false)
+    eq(items[1].enabled_func(), false)
     eq(items[2].text, "Add frame images to koreader/frames/")
     eq(items[2].enabled_func(), false)
     eq(items[2].separator, true)
@@ -323,13 +463,16 @@ end)
 
 -- Menu --------------------------------------------------------------------------
 
-test("menu lists None, then the frames in koreader/frames; the first is shown by default", function()
+test("menu: the Show page frame switch, then the frames in koreader/frames; the first is the default", function()
     fresh({ custom_files = { "Rose garland.webp", "lace.png", "notes.txt" } })
     local ui = newReader()
     local items = menu(ui)
-    eq({ items[1].text, items[2].text, items[3].text }, { "None", "lace", "Rose garland" })
+    eq({ items[1].text, items[2].text, items[3].text }, { "Show page frame", "lace", "Rose garland" })
+    eq(items[1].separator, true)
     eq(items[3].separator, true)
-    eq({ items[1].checked_func(), items[2].checked_func(), items[3].checked_func() }, { false, true, false })
+    eq({ items[1].checked_func(), items[1].enabled_func() }, { true, true })
+    eq({ items[2].checked_func(), items[3].checked_func() }, { true, false })
+    eq(menuItem(items, "None"), nil) -- the switch replaces None
 end)
 
 test("choosing a frame saves it, re-applies the CSS and marks the page dirty", function()
@@ -386,6 +529,92 @@ test("a stray dot inside the text area is erased from the drawing", function()
     eq(mask.data[0], 255) -- the frame itself is still drawn
 end)
 
+-- Frame cache ---------------------------------------------------------------------
+
+local function cachedNames()
+    local out = {}
+    for path in pairs(W.cache_files) do out[#out + 1] = path:match("[^/]+$") end
+    table.sort(out)
+    return out
+end
+
+test("cache: the first open builds the frame and saves it to koreader/cache/pageframe", function()
+    fresh()
+    local ui = newReader()
+    eq(#paint(ui), 1)
+    eq(#W.decoded, 1)
+    eq(W.cache_fs.saves, 1)
+    local names = cachedNames()
+    eq(#names, 1)
+    assert(names[1]:match("%.pfm$"), names[1])
+    local path = next(W.cache_files)
+    eq(path:sub(1, #DATA_DIR + 17), DATA_DIR .. "/cache/pageframe/")
+end)
+
+test("cache: the next open loads it — no decode — and fits the same margins", function()
+    fresh({ opted_in = true })
+    local ui = newReader()
+    ui.plugin:onReaderReady(); W.flush()
+    local first_mask = paint(ui)[1].src
+    local first_margins = margins(ui)
+    local files = W.cache_files
+    fresh({ cache_files = files, opted_in = true }) -- a later KOReader session
+    local ui2 = newReader()
+    ui2.plugin:onReaderReady(); W.flush()
+    local calls = paint(ui2)
+    eq(#W.decoded, 0)
+    eq(#calls, 1)
+    local mask = calls[1].src
+    for _, i in ipairs({ 0, 5, SCREEN_W * 100 + 120, SCREEN_W * SCREEN_H - 1 }) do
+        eq(mask.data[i], first_mask.data[i])
+    end
+    eq(margins(ui2), first_margins)
+    eq(W.cache_fs.saves, 0) -- nothing rewritten
+end)
+
+test("cache: a darkness change builds and caches a second version", function()
+    fresh()
+    local ui = newReader()
+    paint(ui)
+    menuItem(menuItem(menu(ui), "Darkness").sub_item_table, "Bold").callback()
+    paint(ui)
+    eq(#W.decoded, 2)
+    eq(#cachedNames(), 2)
+end)
+
+test("cache: a replaced frame image (new modification time) is rebuilt", function()
+    fresh()
+    paint(newReader())
+    local files = W.cache_files
+    fresh({ cache_files = files })
+    W.image_mtime = 2
+    paint(newReader())
+    eq(#W.decoded, 1)
+end)
+
+test("cache: a damaged cache file is thrown away and rebuilt, never drawn", function()
+    fresh()
+    paint(newReader())
+    local files = W.cache_files
+    local path = next(files)
+    files[path] = files[path]:sub(1, 200) -- truncated, as after a forced reset
+    fresh({ cache_files = files })
+    local calls = paint(newReader())
+    eq(#W.decoded, 1)
+    eq(#calls, 1)
+    eq(#files[path] > 200, true) -- replaced by a good one
+end)
+
+test("cache: an unwritable cache folder still draws the frame", function()
+    fresh()
+    W.cache_unwritable = true
+    local ui = newReader()
+    eq(#paint(ui), 1)
+    eq(#cachedNames(), 0)
+    eq(#paint(ui), 1) -- and keeps using the in-memory copy
+    eq(#W.decoded, 1)
+end)
+
 test("a frame that can't be decoded: one notification, no error, no retry", function()
     fresh({ decode_fails = true })
     local ui = newReader()
@@ -427,7 +656,7 @@ end)
 -- Margins -----------------------------------------------------------------------
 
 test("on open, margins are fitted inside the frame and the originals saved", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     ui.plugin:onReaderReady()
     W.flush()
@@ -439,7 +668,7 @@ test("on open, margins are fitted inside the frame and the originals saved", fun
 end)
 
 test("re-opening the book keeps the original margins saved and sends nothing", function()
-    fresh()
+    fresh({ opted_in = true })
     local store = {}
     local ui = newReader({ doc_store = store })
     ui.plugin:onReaderReady(); W.flush()
@@ -449,27 +678,27 @@ test("re-opening the book keeps the original margins saved and sends nothing", f
     eq(countEvents(ui2, "SetPageMargins"), 0)
 end)
 
-test("setting None puts the book's margins back", function()
-    fresh()
+test("switching the frame off puts the book's margins back", function()
+    fresh({ opted_in = true })
     local ui = newReader()
     ui.plugin:onReaderReady(); W.flush()
-    menuItem(menu(ui), "None").callback()
+    menuItem(menu(ui), "Show page frame").callback()
     eq(margins(ui), { 15, 15, 15, 15 })
     eq(ui.doc_store.pageframe_margins, nil)
 end)
 
 test("margins changed by hand are kept when the frame goes away", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     ui.plugin:onReaderReady(); W.flush()
     ui.document.configurable.t_page_margin = 50 -- the user's own change
-    menuItem(menu(ui), "None").callback()
+    menuItem(menu(ui), "Show page frame").callback()
     eq(margins(ui), { 32, 50, 32, 32 })
     eq(ui.doc_store.pageframe_margins, nil)
 end)
 
 test("turning off Keep text inside restores, turning it on fits again", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     ui.plugin:onReaderReady(); W.flush()
     local item = menuItem(menu(ui), "Keep text inside the frame")
@@ -493,7 +722,7 @@ test("a mask rebuilt after the reader is ready re-fits once, on the next tick", 
 end)
 
 test("a re-fit with new margins keeps the book's original margins saved", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     ui.plugin:onReaderReady(); W.flush()
     -- The frame area changes (status bar shown) and the new frame image has a thicker border:
@@ -502,7 +731,7 @@ test("a re-fit with new margins keeps the book's original margins saved", functi
     paint(ui); W.flush()
     eq(margins(ui), { 40, 40, 40, 40 })
     eq(ui.doc_store.pageframe_margins, { applied = { 40, 40, 40, 40 }, saved = { 15, 15, 15, 15 } })
-    menuItem(menu(ui), "None").callback()
+    menuItem(menu(ui), "Show page frame").callback()
     eq(margins(ui), { 15, 15, 15, 15 })
 end)
 
@@ -520,8 +749,9 @@ test("paged documents: frame painted, no margins, no font, items disabled", func
     eq(menuItem(items, "Keep text inside the frame").enabled_func(), false)
     eq(menuItem(items, "Font with the frame").enabled_func(), false)
     eq(menuItem(items, "Italic text").enabled_func(), false)
-    menuItem(items, "None").callback()
+    menuItem(items, "Show page frame").callback()
     eq(countEvents(ui, "ApplyStyleSheet"), 0)
+    eq(#paint(ui), 0)
 end)
 
 -- Font --------------------------------------------------------------------------
@@ -537,18 +767,18 @@ test("fonts are registered once per session, from the plugin's fonts folder, ski
 end)
 
 test("the style CSS gets the frame font while a frame is on", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader({ tweak_css = "p { margin: 0 }" })
     local css = ui.styletweak:getCssText()
     assert(css:find("^p { margin: 0 }\n"), css)
     assert(css:find('font-family: "Cormorant Garamond"', 1, true))
     assert(css:find("font-style: italic", 1, true))
-    menuItem(menu(ui), "None").callback()
+    menuItem(menu(ui), "Show page frame").callback()
     eq(ui.styletweak:getCssText(), "p { margin: 0 }")
 end)
 
 test("font menu: keep, included, then installed fonts; choosing sends ApplyStyleSheet", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     local fonts = menuItem(menu(ui), "Font with the frame").sub_item_table_func()
     local texts = {}
@@ -564,7 +794,7 @@ test("font menu: keep, included, then installed fonts; choosing sends ApplyStyle
 end)
 
 test("italic can be turned off", function()
-    fresh()
+    fresh({ opted_in = true })
     local ui = newReader()
     menuItem(menu(ui), "Italic text").callback()
     eq(W.settings.pageframe.italic, false)
@@ -574,38 +804,88 @@ end)
 
 -- Toggle ------------------------------------------------------------------------
 
-test("toggle: off remembers the frame, on brings it back", function()
-    fresh({ custom_files = { "lace.png" } })
+test("toggle gesture flips the switch, keeping the chosen frame", function()
+    fresh({ custom_files = { "Rose garland.webp", "lace.png" } })
     local ui = newReader()
-    menuItem(menu(ui), "lace").callback()
+    menuItem(menu(ui), "Rose garland").callback()
     eq(ui.plugin:onTogglePageFrame(), true)
-    eq(W.settings.pageframe.frame, "none")
+    eq({ W.settings.pageframe.enabled, W.settings.pageframe.frame }, { false, "custom:Rose garland.webp" })
+    eq(#paint(ui), 0)
     ui.plugin:onTogglePageFrame()
-    eq(W.settings.pageframe.frame, "custom:lace.png")
-end)
-
-test("toggle: from the default frame, off then back on to it", function()
-    fresh()
-    local ui = newReader()
-    ui.plugin:onTogglePageFrame()
-    eq(W.settings.pageframe.frame, "none")
-    eq(W.settings.pageframe.last_frame, "custom:Rose garland.webp")
-    ui.plugin:onTogglePageFrame()
-    eq(W.settings.pageframe.frame, "custom:Rose garland.webp")
-end)
-
-test("toggle: with nothing remembered, falls back to the first frame", function()
-    fresh({ settings = { pageframe = { frame = "none" } } })
-    local ui = newReader()
-    ui.plugin:onTogglePageFrame()
-    eq(W.settings.pageframe.frame, "custom:Rose garland.webp")
+    eq({ W.settings.pageframe.enabled, W.settings.pageframe.frame }, { true, "custom:Rose garland.webp" })
+    eq(#paint(ui), 1)
 end)
 
 test("toggle: with no frames installed, nothing happens", function()
-    fresh({ no_frames = true, settings = { pageframe = { frame = "none" } } })
+    fresh({ no_frames = true })
     local ui = newReader()
     eq(ui.plugin:onTogglePageFrame(), true)
-    eq(W.settings.pageframe.frame, "none")
+    eq(W.settings.pageframe, nil)
+end)
+
+-- Show page frame -----------------------------------------------------------------
+
+test("switching off hides the frame, drops its font and gives the book its margins back", function()
+    fresh({ opted_in = true })
+    local ui = newReader({ tweak_css = "p { margin: 0 }" })
+    ui.plugin:onReaderReady(); W.flush()
+    eq(margins(ui), FIT)
+    menuItem(menu(ui), "Show page frame").callback()
+    eq(W.settings.pageframe.enabled, false)
+    eq(#paint(ui), 0)
+    eq(ui.styletweak:getCssText(), "p { margin: 0 }")
+    eq(margins(ui), { 15, 15, 15, 15 })
+    eq(menuItem(menu(ui), "Show page frame").checked_func(), false)
+    eq(menuItem(menu(ui), "Rose garland").checked_func(), true) -- the chosen frame is kept
+end)
+
+test("switching back on restores the frame, font and fitted margins", function()
+    fresh({ opted_in = true })
+    local ui = newReader()
+    ui.plugin:onReaderReady(); W.flush()
+    menuItem(menu(ui), "Show page frame").callback()
+    menuItem(menu(ui), "Show page frame").callback()
+    eq(W.settings.pageframe.enabled, true)
+    eq(#paint(ui), 1)
+    assert(ui.styletweak:getCssText():find("Cormorant", 1, true))
+    eq(margins(ui), FIT)
+end)
+
+test("choosing a frame while switched off switches it on", function()
+    fresh({ custom_files = { "Rose garland.webp", "lace.png" } })
+    local ui = newReader()
+    menuItem(menu(ui), "Show page frame").callback()
+    menuItem(menu(ui), "lace").callback()
+    eq({ W.settings.pageframe.enabled, W.settings.pageframe.frame }, { true, "custom:lace.png" })
+    eq(#paint(ui), 1)
+end)
+
+test("starting switched off: nothing drawn, no CSS, no margins touched", function()
+    fresh({ settings = { pageframe = { enabled = false } } })
+    local ui = newReader()
+    ui.plugin:onReaderReady(); W.flush()
+    eq(#paint(ui), 0)
+    eq(ui.styletweak:getCssText(), nil)
+    eq(countEvents(ui, "SetPageMargins"), 0)
+end)
+
+test("1.1.0's None becomes switched off, remembering the last frame", function()
+    fresh({ custom_files = { "Rose garland.webp", "lace.png" },
+            settings = { pageframe = { frame = "none", last_frame = "custom:lace.png" } } })
+    local ui = newReader()
+    local s = ui.plugin.settings
+    eq({ s.enabled, s.frame, s.last_frame }, { false, "custom:lace.png", nil })
+    eq(#paint(ui), 0)
+    menuItem(menu(ui), "Show page frame").callback()
+    eq(ui.plugin:shownFrame().id, "custom:lace.png")
+end)
+
+test("1.1.0's None with nothing remembered: off, and on shows the first frame", function()
+    fresh({ settings = { pageframe = { frame = "none" } } })
+    local ui = newReader()
+    eq({ ui.plugin.settings.enabled, ui.plugin.settings.frame }, { false, nil })
+    ui.plugin:onTogglePageFrame()
+    eq(ui.plugin:shownFrame().id, "custom:Rose garland.webp")
 end)
 
 test("closing the book frees the mask", function()

@@ -80,6 +80,37 @@ test("full-size mask builds, and the text box matches the prototype", function()
     print(("     mask built in %.2f s on this Mac; insets L%d T%d R%d B%d"):format(full.seconds, insets[1], insets[2], insets[3], insets[4]))
 end)
 
+test("cache: save then load gives the identical mask and insets, much faster than building", function()
+    local Cache = require("pageframe_cache")
+    local dir = (os.getenv("TMPDIR") or "/tmp") .. "/pageframe-cache-test"
+    os.execute("rm -rf '" .. dir .. "'")
+    local key = Core.cacheKey{ path = FRAME, size = 1, mtime = 1, w = W, h = H_, darkness = "soft", crisp = true, cell = 8 }
+    eq(Cache.save(dir, key, W, H_, full.mask, full.insets), true)
+    local started = os.clock()
+    local mask, insets = Cache.load(dir, key, W, H_, function(w, h) return Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8) end)
+    local load_s = os.clock() - started
+    assert(mask, "loaded")
+    eq(insets, full.insets)
+    local diffs = 0
+    for y = 0, H_ - 1, 3 do
+        for x = 0, W - 1, 3 do
+            if mask:getPixel(x, y):getColor8().a ~= full.mask:getPixel(x, y):getColor8().a then diffs = diffs + 1 end
+        end
+    end
+    eq(diffs, 0)
+    print(("     cache load %.3f s vs build %.3f s on this Mac"):format(load_s, full.seconds))
+    assert(load_s < full.seconds * 2 + 0.05, "load should not be slower than building")
+    mask:free()
+
+    -- A damaged file (as after a forced reset) is rejected and deleted, never drawn.
+    local path = dir .. "/" .. Cache.name(key)
+    local f = io.open(path, "rb"); local data = f:read("*a"); f:close()
+    f = io.open(path, "wb"); f:write(data:sub(1, #data - 1000)); f:close()
+    eq(Cache.load(dir, key, W, H_, function(w, h) return Blitbuffer.new(w, h, Blitbuffer.TYPE_BB8) end), nil)
+    eq(io.open(path, "rb"), nil)
+    os.execute("rm -rf '" .. dir .. "'")
+end)
+
 test("after erasing specks, no drawing at all within 24 px of the text box", function()
     local mask, ins = full.mask, full.insets
     -- What FrameLayer:prepare does: erase the specks textRect ignored that touch the text box.

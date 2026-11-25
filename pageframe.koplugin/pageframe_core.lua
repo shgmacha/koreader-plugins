@@ -265,6 +265,14 @@ function Core.marginsFor(insets, ratio)
     }
 end
 
+--- Your margins, widened on each side only as far as the frame needs (never narrower).
+function Core.widen(own, need)
+    return {
+        math.max(own[1], need[1]), math.max(own[2], need[2]),
+        math.max(own[3], need[3]), math.max(own[4], need[4]),
+    }
+end
+
 function Core.marginsEqual(a, b)
     if a == nil or b == nil then return a == b end
     for i = 1, 4 do
@@ -299,6 +307,22 @@ function Core.fontCss(s, frame_on)
         parts[#parts + 1] = "em, i, cite, dfn, var, em *, i *, cite * { font-style: normal !important; }"
     end
     return table.concat(parts, "\n")
+end
+
+-- Cache ------------------------------------------------------------------------
+
+-- Bump whenever the mask or text-rectangle code changes, so old cached frames are rebuilt.
+Core.ALGO = "1"
+
+--- The cache key for a prepared frame: everything the mask and insets depend on.
+-- @tparam table k path, size, mtime (of the image), w, h (frame area), darkness, crisp, cell
+function Core.cacheKey(k)
+    local path = tostring(k.path or ""):gsub("[\t\n\r|]", "_")
+    return table.concat({
+        Core.ALGO, path, tostring(k.size or 0), tostring(k.mtime or 0),
+        tostring(k.w) .. "x" .. tostring(k.h), tostring(k.darkness), tostring(k.crisp and true or false),
+        tostring(k.cell or 8),
+    }, "|")
 end
 
 return Core
